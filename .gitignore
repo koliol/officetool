@@ -1,0 +1,37 @@
+## 构建产物
+bin/
+obj/
+*.user
+*.suo
+
+## 前端
+node_modules/
+web/dist/
+.vite/
+
+## 前端构建产物（由 npm run build 生成到后端 wwwroot，不入库）
+src/OfficeTool.Api/wwwroot/
+
+## 预构建前端产物：随部署包分发，不入库
+prebuilt/webdist/
+
+## 桌面插件编译产物（含 65MB 自包含版）：随部署包分发，不入库
+## 由 scripts/build-plugin.sh 生成
+prebuilt/plugin/*.exe
+prebuilt/plugin/.stage-*/
+
+## 数据库与运行时
+*.db
+*.db-shm
+*.db-wal
+logs/
+officetool.db*
+officetool-share/
+
+## 部署时本地生成
+.env
+
+## IDE
+.vs/
+.idea/
+.vscode/

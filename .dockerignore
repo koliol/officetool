@@ -1,0 +1,30 @@
+# 构建上下文裁剪：不要把构建产物、依赖、数据库、日志塞进镜像上下文
+
+# Git 与编辑器
+.git
+.gitignore
+.vs
+.idea
+.vscode
+
+# .NET 构建产物
+**/bin/
+**/obj/
+**/*.user
+
+# 前端依赖与产物
+web/node_modules/
+web/dist/
+src/OfficeTool.Api/wwwroot/
+
+# 运行时数据
+*.db
+*.db-shm
+*.db-wal
+logs/
+officetool-share/
+
+# 文档与脚本（镜像里不需要）
+docs/
+scripts/
+*.md

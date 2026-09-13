@@ -1,0 +1,111 @@
+# Office 文档管理工具 — 群晖 NAS 部署
+#
+# 用法：
+#   1. 复制 .env.example 为 .env，按实际环境修改
+#   2. docker compose up -d --build
+#   3. 浏览器访问 http://<NAS_IP>:8080
+#
+# 关键点：/data 必须挂到 NAS 上那个「共享文件夹」，容器内的 /data/Templates、/data/Data、
+# /data/Attachments 就是它下面的子目录；而客户端看到的路径是 UNC 形式（\\NAS\OfficeDocs\...）。
+# 同一份数据，两个视角，分别由 Storage__TemplatesRoot 与 Storage__ClientTemplatesRoot 描述。
+
+services:
+  officetool:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 国内网络必改：npm 官方源在国内 NAS 上会超时崩溃
+        #   NPM_REGISTRY=https://registry.npmmirror.com
+        # （构建已不再依赖 apt/Debian 源，因此无需 DEBIAN_MIRROR）
+        NPM_REGISTRY: "${NPM_REGISTRY:-https://registry.npmjs.org}"
+    image: officetool:1.0.0
+    container_name: officetool
+
+    restart: unless-stopped
+
+    ports:
+      # 宿主机端口:容器端口
+      - "${HOST_PORT:-8080}:8080"
+
+    environment:
+      # 时区会影响文档命名（yyyyMMdd）。容器默认 UTC，不设会导致凌晨生成的文件日期错一天。
+      TZ: "${TZ:-Asia/Shanghai}"
+      ASPNETCORE_ENVIRONMENT: Production
+
+      # 运行用户。默认 1654:1654（镜像内置的 app 用户）。
+      #
+      # ⚠️ 群晖上必须改：DSM 共享文件夹用的是 Synology ACL（ls 里的 '+'），
+      #    内置 uid 没有 ACL 身份 → 启动时报「模板根 不可用」。
+      #    填「对共享文件夹有权限的 DSM 用户」：
+      #      SSH 执行 `id 你的用户名`
+      #      例：uid=1026(koliol) gid=100(users) → PUID=1026 PGID=100
+      #
+      # 注：这里用环境变量而不是 compose 的 user: —— 那样会跳过入口脚本，
+      #     切用户后旧数据卷（state/keys/logs）归属不对会导致启动失败。
+      PUID: "${PUID:-1654}"
+      PGID: "${PGID:-1654}"
+
+      # 附加组（对应 `id 你的用户名` 里的 groups 列表，逗号分隔）。
+      # 群晖上常常需要：共享文件夹的 ACL 只授给某个组（例如 administrators），
+      # 你的账号是通过**附加组**拿到权限的，只设 PGID 会丢掉它。
+      SUP_GIDS: "${SUP_GIDS:-}"
+
+      # ── 服务端视角（容器内路径，须与下面 volumes 的挂载点一致）──
+      Storage__Mode: Local
+      Storage__TemplatesRoot: /data/Templates
+      Storage__DataRoot: /data/Data
+      # 附件单独存放（与模板不混在一起）。同处 /data 之下，无需额外挂载。
+      Storage__AttachmentsRoot: /data/Attachments
+      # 提取规则同样单独存放（规则本体是文件，按 项目/检项 两级）
+      Storage__RulesRoot: /data/ExtractionRules
+      # 回收站（删除的文件移入此处，可恢复）。与业务根同一挂载卷。
+      Storage__TrashRoot: /data/_trash
+
+      # ── 客户端视角（用户复制到资源管理器 / 桌面插件使用的路径）──
+      # 形如 \\NAS\OfficeDocs\Templates
+      Storage__ClientTemplatesRoot: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\Templates'
+      Storage__ClientDataRoot: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\Data'
+      Storage__ClientAttachmentsRoot: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\Attachments'
+      Storage__ClientRulesRoot: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\ExtractionRules'
+
+      # 桌面插件安装包地址（可留空，界面会隐藏下载入口）
+      DesktopPlugin__DownloadUrl: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\plugin\OfficeToolPlugin.exe'
+
+    volumes:
+      # ① NAS 共享文件夹 → 模板与文档真正存放的位置
+      #    群晖上通常是 /volume1/OfficeDocs
+      #    注意：bind mount 要求宿主机路径已存在，不存在会报
+      #    "Bind mount failed: ... does not exist"
+      - "${SHARE_PATH:-/volume1/OfficeDocs}:/data"
+
+      # ② 应用状态（SQLite 数据库）—— 必须持久化，否则重建容器会丢项目/模板记录
+      - officetool-state:/app/state
+
+      # ③ Data Protection 密钥环 —— 必须持久化，否则重建容器后无法解密已加密的凭据
+      - officetool-keys:/app/keys
+
+      # ④ 日志
+      #    刻意用命名卷而非 bind mount：bind mount 要求宿主机目录先存在，
+      #    否则容器起不来。命名卷由 Docker 自动创建，没有这个坑。
+      #    看日志：docker compose logs -f officetool
+      #    （应用同时输出到 stdout，由 Docker 日志驱动保留）
+      - officetool-logs:/app/logs
+
+    # 健康检查由镜像内置（用 bash /dev/tcp 实现，不依赖 curl），
+    # 这里刻意不再重复定义 —— 重复写容易出现「镜像里没有的工具」这种不一致。
+    # 需要调整间隔/超时的话，改 Dockerfile 里的 HEALTHCHECK。
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  officetool-state:
+    name: officetool-state
+  officetool-keys:
+    name: officetool-keys
+  officetool-logs:
+    name: officetool-logs

@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Windows 托盘插件本体（.NET 8 WinForms）。
+
+    交叉编译说明：
+      * 目标框架带 -windows 后缀 + UseWindowsForms 才会引入 WinForms；
+      * EnableWindowsTargeting 允许在 Linux/macOS 上还原 Windows 目标包；
+      * RuntimeIdentifier=win-x64 让 self-contained 发布可以产出 Windows PE。
+    真正做发布请用 scripts/build-plugin.sh，它会产出两个单文件 exe。
+
+    注意：本项目刻意不加入 OfficeTool.sln，以免影响既有的解决方案构建。
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- 产物名固定为 OfficeToolPlugin.exe，方便注册表命令行与脚本引用。 -->
+    <AssemblyName>OfficeToolPlugin</AssemblyName>
+    <RootNamespace>OfficeTool.Desktop</RootNamespace>
+    <Product>Office 文档管理插件</Product>
+    <AssemblyTitle>Office 文档管理插件</AssemblyTitle>
+    <Description>内网 Office 文档管理工具的 Windows 桌面托盘插件，负责处理 officetool:// 协议。</Description>
+    <Version>1.0.0</Version>
+    <Authors>OfficeTool</Authors>
+
+    <!-- 单文件发布是默认形态，脚本会再加压缩、去符号等参数。 -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OfficeTool.Desktop.Core\OfficeTool.Desktop.Core.csproj" />
+  </ItemGroup>
+
+</Project>

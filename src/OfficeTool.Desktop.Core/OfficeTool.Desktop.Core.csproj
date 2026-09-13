@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    平台无关的插件核心库。
+    刻意不使用 net8.0-windows / WinForms / 注册表 API，这样可以在 Linux 上直接跑单元测试。
+    所有真正接触 Windows 的能力（托盘、注册表、ShellExecute）都留在 OfficeTool.Desktop 项目里。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>OfficeTool.Desktop.Core</RootNamespace>
+    <AssemblyName>OfficeTool.Desktop.Core</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>
