@@ -326,25 +326,32 @@ RuleNotes → 重启 → 表被自动补建、无报错、备注功能可用。
 | `26f0b13` | Windows 桌面托盘插件 + 交付打包 |
 | `9e88271` | 提取规则改为目录+文件（备注/上传/跨文件夹复制）+ 文档跨文件夹复制 |
 | `26f0b13`… | EF Migrations + 旧库 Baseline；列表查询下推 SQL；`_trash` 回收站；`/api/projects/tree` |
-| **（本轮，未推送）** | **鉴权体系**：双通道认证 + 递进权限 + 数据级可见性过滤 + 权限管理 API；模板复制选目标路径；前端改版（零依赖路由 + 登录/403/回收站/令牌/用户/组/授权页） |
+| **`d4065cad`** | **鉴权体系**：双通道认证 + 递进权限 + 数据级可见性过滤 + 权限管理 API；模板复制选目标路径；前端改版（零依赖路由 + 登录/403/回收站/令牌/用户/组/授权页） |
 
-> **本轮改动尚未推送到 GitHub。**
+> **本轮改动已推送到 GitHub**（`2026-09-24`）。
 >
-> 本机工作副本是从 zip 解压而来，没有 `.git`；且企业环境禁用了 git 的 https remote helper
-> （`remote helper 'https' aborted session`），因此推送走 **GitHub REST API**（详见
-> `OfficeTool-改造设计-v1.md` 第 11 节「推送流程」）。
+> | 项 | 值 |
+> |---|---|
+> | 新提交 | `d4065cade29f`「鉴权体系 + 模板复制选路径 + 前端改版」 |
+> | 父提交 | `1747a87d`（`Initial commit`）→ **fast-forward，历史完整保留** |
+> | 新 tree | `5fd94cea2ece` |
+> | 上传 | 63 个 blob（新增 31 + 修改 32），约 63 次 API 调用 |
+> | 回读校验 | 远端 134 blob / 本地 134 文件，**逐字节完全一致（差异 0）** |
 >
-> **当前阻塞**：换发后的 PAT **可读不可写** —— `GET /user` → 200（`login=koliol`）、读取仓库/ref 均 200，
-> 但 `POST /repos/koliol/officetool/git/blobs` → **403 `Resource not accessible by personal access token`**，
-> 即 fine-grained PAT 缺 **Contents: Read and write**。
-> （注意：`/repos` 响应里的 `permissions` 字段是**用户对该仓库的角色**，不是令牌授权，别被它误导。）
-> 修好后执行 `GH_TOKEN=… python _push/gh_push.py --apply` 即可（约 63 次 API 调用）。
-> **远端完全未被改动**：第 1 个 blob 就失败，脚本随即退出，未建任何 tree/commit，`main` 仍是 `1747a87d`。
+> **为什么走 REST API 而不是 git**：本机工作副本从 zip 解压而来没有 `.git`；且企业环境禁用了
+> git 的 https remote helper（`remote helper 'https' aborted session`）。推送工具在仓库外：
+> `_push/gh_push.py`（`GH_TOKEN=… python _push/gh_push.py --apply`），详见
+> `OfficeTool-改造设计-v1.md` 第 11 节「推送流程」。
 >
-> **推送前侦察已完成**（对远端 tree 逐文件比对 blob SHA）：远端 HEAD `1747a87d67a1`（`2026-09-13`）、
+> **推送前侦察**（对远端 tree 逐文件比对 blob SHA）：远端 HEAD `1747a87d67a1`（`2026-09-13`）、
 > 103 个 blob；本地 134 个文件；**新增 31 / 修改 32 / 未改动 71 / 远端独有 0**。
-> 71 个文件与远端字节级相同 → **基线一致**，且本次为**纯增量**（无需删除远端任何文件）。
-> 仓库是 public，只读侦察可匿名进行（限额 60 次/小时）。
+> 71 个文件与远端字节级相同 → **基线一致**，且本次为**纯增量**（未删除任何远端文件）。
+>
+> **令牌踩坑留档**：旧 PAT 已失效（`GET /user` → 401）；第一次换发的 fine-grained PAT
+> **可读不可写**（`GET /user` 200，但 `POST /git/blobs` → `403 Resource not accessible by
+> personal access token`，即缺 **Contents: Read and write**）；补上写权限后一条命令即通。
+> ⚠️ `/repos` 响应里的 `permissions` 字段是**用户对该仓库的角色**（owner 全 true），
+> **不是令牌授权**，别被它误导 —— 判断令牌够不够只能实际写一次。
 
 ---
 
