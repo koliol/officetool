@@ -33,6 +33,25 @@ public sealed class RequestContext(IHttpContextAccessor accessor)
     }
 
     public string? UserAgent => _accessor.HttpContext?.Request.Headers.UserAgent.ToString();
+
+    /// <summary>
+    /// 当前请求的身份。<see cref="IAccessControlService"/> 用它解析权限。
+    /// Cookie 通道（浏览器）与 Bearer 通道（脚本）产生的 principal 结构一致。
+    /// </summary>
+    public System.Security.Claims.ClaimsPrincipal? User => _accessor.HttpContext?.User;
+
+    /// <summary>
+    /// 当前操作人登录名。鉴权关闭时为 null。
+    /// Linux 上 Negotiate 给的是 <c>user@DOMAIN</c>，这里统一成不带域前缀的 sAMAccountName。
+    /// </summary>
+    public string? UserName
+    {
+        get
+        {
+            var raw = _accessor.HttpContext?.User?.Identity?.Name;
+            return string.IsNullOrWhiteSpace(raw) ? null : AccessControlService.NormalizeAccountName(raw);
+        }
+    }
 }
 
 /// <summary>

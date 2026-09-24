@@ -1,21 +1,21 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { documentApi, ruleApi } from '../api'
+import { documentApi, ruleApi, templateApi } from '../api'
 import { useAppStore } from '../store'
 
 /**
  * 「复制到…」目标路径选择弹窗。
  *
- * 文档与提取规则共用：两者都要求用户**显式选择目标项目/检项**，
- * 而不是直接在当前文件夹里生成一份副本。
+ * 模板 / 文档 / 提取规则三者共用：都要求用户**显式选择目标项目/检项**，
+ * 而不是在当前文件夹里默默生成一份副本。
  *
  * 目标只提交项目/检项**编码**，由服务端按配置拼路径 ——
  * 前端不构造路径，也就无法绕出存储根。
  */
 const props = defineProps({
   visible: { type: Boolean, default: false },
-  /** 'document' | 'rule' */
+  /** 'template' | 'document' | 'rule' */
   kind: { type: String, required: true },
   project: { type: String, default: '' },
   check: { type: String, default: '' },
@@ -29,9 +29,17 @@ const store = useAppStore()
 const busy = ref(false)
 const target = reactive({ project: '', check: '', newFileName: '' })
 
-const isDocument = computed(() => props.kind === 'document')
+const isRule = computed(() => props.kind === 'rule')
+const isTemplate = computed(() => props.kind === 'template')
 
-const title = computed(() => (isDocument.value ? '复制文档到…' : '复制提取规则到…'))
+/** 单文件复制（模板、文档）才能指定新文件名；规则是批量，不支持逐个改名 */
+const singleFile = computed(() => !isRule.value && props.fileNames.length === 1)
+
+const title = computed(() => {
+  if (isTemplate.value) return '复制模板到…'
+  if (isRule.value) return '复制提取规则到…'
+  return '复制文档到…'
+})
 
 const scopeText = computed(() =>
   props.project ? (props.check ? `${props.project} / ${props.check}` : props.project) : '未选择',
@@ -45,10 +53,16 @@ const targetChecks = computed(() => {
 
 const canSubmit = computed(() => Boolean(target.project && target.check) && !busy.value)
 
-/** 目标与源完全相同：后端会拒绝，这里提前给出更清楚的提示 */
-const sameAsSource = computed(
-  () => target.project === props.project && target.check === props.check,
-)
+const sameAsSource = computed(() => target.project === props.project && target.check === props.check)
+
+/**
+ * 选回原文件夹是否算错。
+ *
+ * 模板例外：「就在当前文件夹再复制一份」是模板的常用操作（做变体），
+ * 后端也支持（命名为 原名_副本.ext）。文档与规则的目标选择本来就是为了
+ * **搬到别处**，选回原处没有任何意义。
+ */
+const sameFolderBlocked = computed(() => sameAsSource.value && !isTemplate.value)
 
 watch(
   () => props.visible,
@@ -74,7 +88,7 @@ function close() {
 async function submit() {
   if (!canSubmit.value) return
 
-  if (sameAsSource.value) {
+  if (sameFolderBlocked.value) {
     ElMessage.warning('目标文件夹与源文件夹相同，请选择不同的项目或检项。')
     return
   }
@@ -86,8 +100,33 @@ async function submit() {
 
   busy.value = true
   try {
-    const result = isDocument.value
-      ? await documentApi.copy({
+    if (isTemplate.value) {
+      // 模板复制是单个操作，返回新建的 TemplateDto（含最终确定的文件名）
+      const created = await templateApi.copy({
+        project: props.project,
+        check: props.check,
+        sourceFileName: props.fileNames[0],
+        targetProject: target.project,
+        targetCheck: target.check,
+        newFileName: target.newFileName.trim() || null,
+      })
+
+      ElMessage.success(`已复制到 ${created.project} / ${created.check}：${created.fileName}`)
+      store.bumpDataVersion()
+      emit('copied', created)
+      close()
+      return
+    }
+
+    const result = isRule.value
+      ? await ruleApi.copy({
+          project: props.project,
+          check: props.check,
+          fileNames: props.fileNames,
+          targetProject: target.project,
+          targetCheck: target.check,
+        })
+      : await documentApi.copy({
           project: props.project,
           check: props.check,
           fileName: props.fileNames[0],
@@ -95,20 +134,11 @@ async function submit() {
           targetCheck: target.check,
           newFileName: target.newFileName.trim() || null,
         })
-      : await ruleApi.copy({
-          project: props.project,
-          check: props.check,
-          fileNames: props.fileNames,
-          targetProject: target.project,
-          targetCheck: target.check,
-        })
 
     const where = `${result.targetProject} / ${result.targetCheck}`
 
     if (result.copied.length) {
-      ElMessage.success(
-        `已复制 ${result.copied.length} 个文件到 ${where}：${result.copied.join('、')}`,
-      )
+      ElMessage.success(`已复制 ${result.copied.length} 个文件到 ${where}：${result.copied.join('、')}`)
     }
 
     if (result.skipped.length) {
@@ -153,7 +183,7 @@ async function submit() {
       <el-divider content-position="left">复制到</el-divider>
 
       <el-form-item label="目标项目">
-        <el-select v-model="target.project" placeholder="请选择项目" style="width: 100%">
+        <el-select v-model="target.project" placeholder="请选择项目" filterable style="width: 100%">
           <el-option v-for="p in store.projects" :key="p.name" :label="p.name" :value="p.name" />
         </el-select>
       </el-form-item>
@@ -172,20 +202,23 @@ async function submit() {
         </div>
       </el-form-item>
 
-      <el-form-item v-if="isDocument && fileNames.length === 1" label="新文件名">
+      <el-form-item v-if="singleFile" label="新文件名">
         <el-input v-model="target.newFileName" placeholder="留空沿用原名（重名自动加 _副本）" clearable />
       </el-form-item>
 
-      <div v-if="sameAsSource" class="hint warn">
+      <div v-if="sameFolderBlocked" class="hint warn">
         目标与来源相同，请选择不同的项目或检项。
       </div>
 
       <div v-else class="hint">
-        <template v-if="isDocument">
-          目标已有同名文件时会自动命名为 <code>原名_副本.ext</code>，不会覆盖。
+        <template v-if="isTemplate">
+          目标已有同名模板时会自动命名为 <code>原名_副本.ext</code>，不会覆盖；指定了新文件名且撞名则直接报错。
+        </template>
+        <template v-else-if="isRule">
+          规则复制时<strong>备注会一并带过去</strong>；目标已存在同名的规则会被跳过并单独提示，不会覆盖。
         </template>
         <template v-else>
-          规则复制时<strong>备注会一并带过去</strong>；目标已存在同名的规则会被跳过并单独提示，不会覆盖。
+          目标已有同名文件时会自动命名为 <code>原名_副本.ext</code>，不会覆盖。
         </template>
       </div>
     </el-form>
@@ -217,5 +250,12 @@ async function submit() {
 
 .hint.warn {
   color: #e6a23c;
+}
+
+code {
+  background: #f5f7fa;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: Consolas, Monaco, monospace;
 }
 </style>

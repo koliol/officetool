@@ -31,7 +31,9 @@ public sealed class RuleCatalogService(
     StorageOptions storageOptions,
     UploadOptions uploadOptions,
     OperationLogService logs,
-    TrashService trash)
+    TrashService trash,
+    RequestContext request,
+    IAccessControlService access)
 {
     private readonly AppDbContext _db = db;
     private readonly ProjectCatalogService _catalog = catalog;
@@ -41,6 +43,10 @@ public sealed class RuleCatalogService(
     private readonly UploadOptions _upload = uploadOptions;
     private readonly OperationLogService _logs = logs;
     private readonly TrashService _trash = trash;
+    private readonly RequestContext _request = request;
+    private readonly IAccessControlService _access = access;
+
+    private Task<UserAccess> CurrentAccessAsync(CancellationToken ct) => _access.ResolveAccessAsync(_request, ct);
 
     // ── 查询 ────────────────────────────────────────────────────────────
 
@@ -49,6 +55,8 @@ public sealed class RuleCatalogService(
         string projectName, string checkName, CancellationToken ct = default)
     {
         var (project, check) = await _catalog.ResolveAsync(projectName, checkName, ct);
+        (await CurrentAccessAsync(ct)).RequireRead(check.Id, $"{project.Name}/{check.Name}");
+
         var directory = _layout.RuleDirectory(project.Name, check.Name);
 
         if (!_store.DirectoryExists(directory))
@@ -82,6 +90,7 @@ public sealed class RuleCatalogService(
         CancellationToken ct = default)
     {
         var (project, check) = await _catalog.ResolveAsync(projectName, checkName, ct);
+        (await CurrentAccessAsync(ct)).Require(check.Id, AccessLevel.RuleManage, "上传提取规则", $"{project.Name}/{check.Name}");
 
         if (declaredSize > _upload.MaxSizeBytes)
         {
@@ -135,6 +144,8 @@ public sealed class RuleCatalogService(
         string projectName, string checkName, string fileName, CancellationToken ct = default)
     {
         var (project, check) = await _catalog.ResolveAsync(projectName, checkName, ct);
+        (await CurrentAccessAsync(ct)).Require(check.Id, AccessLevel.RuleManage, "删除提取规则", $"{project.Name}/{check.Name}");
+
         var safeName = NameValidator.ValidateFileName(fileName);
 
         var fullPath = PathGuard.CombineUnderRoot(_layout.RuleDirectory(project.Name, check.Name), safeName);
@@ -164,6 +175,8 @@ public sealed class RuleCatalogService(
     public async Task<RuleDto> UpdateNoteAsync(UpdateRuleNoteRequest request, CancellationToken ct = default)
     {
         var (project, check) = await _catalog.ResolveAsync(request.Project, request.Check, ct);
+        (await CurrentAccessAsync(ct)).Require(check.Id, AccessLevel.RuleManage, "修改规则备注", $"{project.Name}/{check.Name}");
+
         var safeName = NameValidator.ValidateFileName(request.FileName);
 
         var fullPath = PathGuard.CombineUnderRoot(_layout.RuleDirectory(project.Name, check.Name), safeName);
@@ -230,6 +243,12 @@ public sealed class RuleCatalogService(
         {
             throw new BadRequestException("目标文件夹与源文件夹相同，无需复制。");
         }
+
+        // 规则复制要求两端都是 RuleManage：读源规则口径 + 往目标写规则都算规则管理，
+        // 只用 Write 会让「能改文档的人」悄悄改掉别人的提取口径。
+        var ruleAccess = await CurrentAccessAsync(ct);
+        ruleAccess.Require(check.Id, AccessLevel.RuleManage, "复制提取规则", $"{project.Name}/{check.Name}");
+        ruleAccess.Require(targetCheck.Id, AccessLevel.RuleManage, "复制提取规则到", $"{targetProject.Name}/{targetCheck.Name}");
 
         var sourceDir = _layout.RuleDirectory(project.Name, check.Name);
         var targetDir = _layout.RuleDirectory(targetProject.Name, targetCheck.Name);

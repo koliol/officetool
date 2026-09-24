@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { attachmentApi, ruleApi } from '../api'
 import { useAppStore } from '../store'
+import { useAuthStore, LEVELS } from '../auth'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -19,6 +20,7 @@ const props = defineProps({
 const emit = defineEmits(['update:visible'])
 
 const store = useAppStore()
+const auth = useAuthStore()
 
 const rows = ref([])
 const rules = ref([])
@@ -40,6 +42,18 @@ const scopeText = computed(() =>
 )
 
 const canOperate = computed(() => Boolean(props.project && props.check))
+
+/**
+ * 附件落在 项目/检项 上，权限也按该范围判：
+ * 上传是编辑动作，删除是管理动作。读取与提取只要求能看到附件。
+ */
+const canWrite = computed(
+  () => canOperate.value && auth.levelOfScope(props.project, props.check) >= LEVELS.Write,
+)
+
+const canManage = computed(
+  () => canOperate.value && auth.levelOfScope(props.project, props.check) >= LEVELS.Manage,
+)
 
 const selectedRule = computed(
   () => rules.value.find((r) => r.fileName === ruleFileName.value) || null,
@@ -153,6 +167,12 @@ async function customUpload(option) {
     return
   }
 
+  if (!canWrite.value) {
+    ElMessage.error('你对当前「项目 / 检项」没有编辑权限，无法上传附件')
+    uploading.value = false
+    return
+  }
+
   uploading.value = true
   try {
     await attachmentApi.upload(props.project, props.check, option.file, (e) => {
@@ -204,6 +224,11 @@ async function extract(row) {
 }
 
 async function removeRow(row) {
+  if (!canManage.value) {
+    ElMessage.warning('删除附件需要「管理」权限')
+    return
+  }
+
   try {
     await ElMessageBox.confirm(`确认删除附件 ${row.fileName}？`, '二次确认', {
       type: 'warning',
@@ -264,12 +289,13 @@ function close() {
 
     <div class="attachment-toolbar">
       <el-upload
+        v-if="canWrite"
         :show-file-list="false"
         :before-upload="beforeUpload"
         :http-request="customUpload"
-        :disabled="!canOperate"
+        :disabled="!canWrite"
       >
-        <el-button type="primary" :loading="uploading" :disabled="!canOperate">
+        <el-button type="primary" :loading="uploading" :disabled="!canWrite">
           <el-icon><Upload /></el-icon>&nbsp;上传附件
         </el-button>
       </el-upload>
@@ -326,7 +352,9 @@ function close() {
             </span>
           </el-tooltip>
           <el-button link type="primary" size="small" @click="copyPath(row)">复制路径</el-button>
-          <el-button link type="danger" size="small" @click="removeRow(row)">删除</el-button>
+          <el-button link type="danger" size="small" :disabled="!canManage" @click="removeRow(row)">
+            删除
+          </el-button>
         </template>
       </el-table-column>
     </el-table>

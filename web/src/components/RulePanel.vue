@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { projectApi, ruleApi } from '../api'
 import { useAppStore } from '../store'
+import { useAuthStore, LEVELS } from '../auth'
 import CopyToDialog from './CopyToDialog.vue'
 
 /**
@@ -18,6 +19,7 @@ const props = defineProps({
 })
 
 const store = useAppStore()
+const auth = useAuthStore()
 
 const rows = ref([])
 const loading = ref(false)
@@ -36,6 +38,29 @@ const noteDraft = ref('')
 const allowedExtensions = computed(() => store.config?.ruleExtensions || [])
 
 const canOperate = computed(() => Boolean(filters.project && filters.check))
+
+/**
+ * 当前范围上有没有提取规则维护权。
+ *
+ * 与 `canOperate` 分开：前者是「选没选范围」，后者是「有没有权限」。
+ * 合并成一个会导致「没选范围」和「没权限」给出同一句提示，
+ * 用户分不清是该先去左边选项目，还是该去找管理员要权限。
+ */
+const canRuleManage = computed(
+  () =>
+    canOperate.value &&
+    auth.levelOfScope(filters.project, filters.check) >= LEVELS.RuleManage,
+)
+
+const deniedHint = computed(() => {
+  if (!canOperate.value) {
+    return '请先在左侧选择项目与检项'
+  }
+  if (!canRuleManage.value) {
+    return '你对当前「项目 / 检项」没有提取规则维护权限'
+  }
+  return ''
+})
 
 const selectedNames = computed(() => selected.value.map((r) => r.fileName))
 
@@ -116,8 +141,8 @@ function beforeUpload(file) {
 }
 
 async function customUpload(option) {
-  if (!canOperate.value) {
-    ElMessage.warning('请先在左侧选择项目与检项，再上传提取规则')
+  if (!canRuleManage.value) {
+    ElMessage.warning(deniedHint.value || '没有维护提取规则的权限')
     uploading.value = false
     return
   }
@@ -141,6 +166,10 @@ async function customUpload(option) {
 // ── 备注：网页上直接改 ────────────────────────────────────────────────
 
 function startEditNote(row) {
+  if (!canRuleManage.value) {
+    ElMessage.warning('没有维护提取规则的权限')
+    return
+  }
   editingNote.value = row.fileName
   noteDraft.value = row.note || ''
 }
@@ -189,6 +218,11 @@ async function copyPath(row) {
 }
 
 async function removeRow(row) {
+  if (!canRuleManage.value) {
+    ElMessage.warning('没有维护提取规则的权限')
+    return
+  }
+
   try {
     await ElMessageBox.confirm(
       `确认删除提取规则 ${row.fileName}？备注会一并清除，此操作不可撤销。`,
@@ -209,6 +243,11 @@ async function removeRow(row) {
 }
 
 function openCopyDialog() {
+  if (!canRuleManage.value) {
+    ElMessage.warning('没有维护提取规则的权限')
+    return
+  }
+
   if (!selectedNames.value.length) {
     ElMessage.warning('请先勾选要复制的规则')
     return
@@ -298,14 +337,14 @@ defineOptions({ name: 'RulePanel' })
         :show-file-list="false"
         :before-upload="beforeUpload"
         :http-request="customUpload"
-        :disabled="!canOperate"
+        :disabled="!canRuleManage"
       >
-        <el-button type="primary" :loading="uploading" :disabled="!canOperate">
+        <el-button type="primary" :loading="uploading" :disabled="!canRuleManage">
           <el-icon><Upload /></el-icon>&nbsp;上传提取规则
         </el-button>
       </el-upload>
 
-      <el-button :disabled="!selectedNames.length" @click="openCopyDialog">
+      <el-button :disabled="!canRuleManage || !selectedNames.length" @click="openCopyDialog">
         <el-icon><CopyDocument /></el-icon>&nbsp;复制到…<span v-if="selectedNames.length">（{{ selectedNames.length }}）</span>
       </el-button>
 
@@ -315,12 +354,12 @@ defineOptions({ name: 'RulePanel' })
     </div>
 
     <el-alert
-      v-if="!canOperate"
+      v-if="deniedHint"
       type="info"
       :closable="false"
       show-icon
-      title="请先在左侧选择项目与检项"
-      description="提取规则按「项目 / 检项」两级存放，与模板、文档、附件同一套目录结构。"
+      :title="deniedHint"
+      description="提取规则按「项目 / 检项」两级存放，维护它需要该范围上的「规则管理」权限。"
       style="margin-bottom: 10px"
     />
 
@@ -366,11 +405,19 @@ defineOptions({ name: 'RulePanel' })
 
       <el-table-column label="操作" width="196" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="startEditNote(row)">
+          <el-button
+            link
+            type="primary"
+            size="small"
+            :disabled="!canRuleManage"
+            @click="startEditNote(row)"
+          >
             {{ row.note ? '改备注' : '加备注' }}
           </el-button>
           <el-button link type="primary" size="small" @click="copyPath(row)">复制路径</el-button>
-          <el-button link type="danger" size="small" @click="removeRow(row)">删除</el-button>
+          <el-button link type="danger" size="small" :disabled="!canRuleManage" @click="removeRow(row)">
+            删除
+          </el-button>
         </template>
       </el-table-column>
 

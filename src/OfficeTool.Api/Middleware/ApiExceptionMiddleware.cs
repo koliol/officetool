@@ -56,6 +56,7 @@ public sealed class ApiExceptionMiddleware(
         NotFoundException => (StatusCodes.Status404NotFound, "not_found", ex.Message),
         ConflictException => (StatusCodes.Status409Conflict, "conflict", ex.Message),
         BadRequestException => (StatusCodes.Status400BadRequest, "bad_request", ex.Message),
+        AccessDeniedException => (StatusCodes.Status403Forbidden, "access_denied", ex.Message),
         FeatureNotAvailableException => (StatusCodes.Status501NotImplemented, "feature_not_available", ex.Message),
 
         DayNumberExhaustedException => (StatusCodes.Status409Conflict, "day_number_exhausted", ex.Message),

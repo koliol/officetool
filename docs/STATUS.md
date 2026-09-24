@@ -9,6 +9,8 @@
 | 项目名 | Office 文档管理工具（OfficeTool） |
 | 依据文档 | 《Office 文档管理工具 完整设计文档 V1.0》 |
 | 仓库路径 | `/home/ubuntu/projects/OfficeTool` |
+| 本轮改造工作副本 | `D:\WorkBoddy\office\officetool`（Windows，从 zip 解压，无 `.git`） |
+| 改造设计文档 | `OfficeTool-改造设计-v1.md`（鉴权/模板复制/页面改版，本轮唯一设计事实来源） |
 | 部署形态 | **群晖 NAS + Docker**（`docker-compose.yml` + 多阶段 `Dockerfile`） |
 | 技术栈 | ASP.NET Core 8 (net8.0) + EF Core 8 + SQLite(WAL) + Vue 3 + Element Plus + Vite |
 | 开发/验证机 | Ubuntu 24.04.4 LTS + Docker 29.1.3 (x86_64) |
@@ -52,8 +54,13 @@
 | `ProjectsController` / `TemplatesController` / `DocumentsController` / `SystemController` | §7.5 全部端点 + sync/logs/config/protect |
 | `AttachmentsController` | 附件列表/上传/删除 + 提取（**契约已定、当前 501**） |
 | `RulesController` | 提取规则列表/上传/删除/备注/复制到其他文件夹 |
-| `AppDbContext` | EF Core：Projects / Checks / Templates / Documents / **RuleNotes** / OperationLogs |
+| **`AuthController`**（本轮新增） | `/api/auth/*`：`me` / `sso`(Negotiate) / `login` / `logout` / `change-password` / `tokens`(CRUD) / `rights/map` / `rights` |
+| **`AdminController`**（本轮新增） | `/api/admin/*`：用户 / 组 / 授权条目 CRUD + 有效权限展开 + 配置自检；仅 `IsSystemAdmin`（每请求回查实体） |
+| `AppDbContext` | EF Core：Projects / Checks / Templates / Documents / **RuleNotes** / OperationLogs / **Users / Groups / UserGroups / AclEntries / ApiTokens** |
 | `ProjectCatalogService` / `ContentCatalogService` | 编目与文件操作编排；四个平行目录集中在一处 |
+| **`AccessControlService`**（本轮新增） | 权限解析：递进等级 + 项目级展开 + 检项级例外覆盖；10 分钟缓存 + 主动失效 |
+| **`AdminService`**（本轮新增） | 用户/组/授权条目 CRUD、超管引导、有效权限展开、自锁防护、域组保护 |
+| **`ApiTokenService`**（本轮新增） | 访问令牌颁发（明文仅返回一次、库存 SHA-256）/ 校验 / 吊销（即时清缓存） |
 | `AttachmentService` | 附件存储与查询（**附件不进库**，直接以文件系统为准） |
 | `RuleCatalogService` | 规则文件 + 备注（备注进库、规则进文件系统） |
 | `OperationLogService` / `RequestContext` / `CredentialProtector` | 审计日志、请求上下文、凭据加解密 |
@@ -69,9 +76,11 @@
 ### 测试与脚本
 | 路径 | 说明 |
 |---|---|
-| `tests/OfficeTool.Core.Tests` | xUnit **73 项** |
-| `scripts/api-smoke.sh` | **39 项**接口冒烟，可用 `BASE_URL` / `SHARE_ROOT` 指向任意环境 |
-| `scripts/docker-verify.sh` | 容器形态验证：启动探测、冒烟、客户端路径、持久化、重建 |
+| `tests/OfficeTool.Core.Tests` | xUnit **77 项** |
+| `tests/OfficeTool.Api.Tests` | xUnit **40 项**（含 4 条端点安全守卫：匿名白名单反射校验，已做变异测试确认会失败） |
+| `scripts/api-smoke.sh` | **39 项**接口冒烟，可用 `BASE_URL` / `SHARE_ROOT` 指向任意环境；支持令牌或账号口令凭据 |
+| `scripts/docker-verify.sh` | 容器形态验证：启动探测、冒烟、客户端路径、持久化、重建；**第 8 节验证鉴权开启形态** |
+| `tools/vue-static-check/` | 前端静态校验（见第七节）；`node.exe` 被禁下的替代手段 |
 
 ---
 
@@ -132,6 +141,19 @@ cd web && npm install && npm run dev     # http://127.0.0.1:5173
 | 24 规则上传 + 备注栏网页直接修改 | ✅ | `RulesController`、`RuleNotes` 表 |
 | 25 规则可复制到其他文件夹（选目标路径） | ✅ | `POST /api/extraction-rules/copy` |
 | 26 文档复制改为选目标路径（非当前文件夹） | ✅ | `POST /api/documents/copy`、`CopyToDialog.vue` |
+
+### 本轮改造：鉴权与权限（原设计文档未覆盖，用户新增需求）
+
+原设计文档的需求 1–26 只覆盖「文档管理」功能，**没有鉴权**。本轮按用户新增的三项要求改造：
+
+| 新增需求 | 状态 | 落点 |
+|---|---|---|
+| A1 域（AD/LDAP）集成，把域用户拉进组 | ✅ | `UserDirectoryService.UpsertAdUserAsync`；SSO 登录时同步用户与域组关系（整体覆盖） |
+| A2 以组为单位定权限，权限控制**可见性**（文件夹/文件/规则） | ✅ | `AccessControlService` + 数据级过滤；`AclEntries`（组 × 项目/检项 × 等级） |
+| A3 模板复制支持**选择目标路径** | ✅ | `POST /api/templates/copy`、`CopyToDialog.vue`（`kind="template"`） |
+| A4 页面改版（贴合最终用户） | ✅ | 零依赖 hash 路由 + 登录页 + 按权限裁剪的工作台 + 6 个管理页 |
+
+设计决策、数据模型、API 清单与实施进度见 **`OfficeTool-改造设计-v1.md`**（本项目改造的唯一设计事实来源）。
 
 ### 本轮新增：提取规则（第 22–26 项）
 
@@ -213,12 +235,22 @@ RuleNotes → 重启 → 表被自动补建、无报错、备注功能可用。
 
 ## 七、验证结果
 
-### 单元测试与接口冒烟
+### 单元测试与接口冒烟（本轮更新）
+
 | 项目 | 结果 |
 |---|---|
-| `dotnet test` | **73 / 73 通过** |
+| `dotnet test` | **117 / 117 通过**（Core 77 + Api 40） |
+| `dotnet build` 编译告警 | **0 warning / 0 error** |
+| 前端静态校验（`tools/vue-static-check/run_all.py --selftest`） | **4 项全通过 + 校验器自检通过** |
+| `bash -n scripts/api-smoke.sh scripts/docker-verify.sh` | 通过 |
 | `bash scripts/api-smoke.sh`（本机 5080） | **78 / 78 通过**（原 53 项 + 提取规则/跨文件夹复制 25 项） |
 | 浏览器实测（开发 + 生产构建） | 页面加载 / 树联动 / 新建项目 / 新建文档 / 打开对话框 / 下拉菜单 全部通过，控制台 0 错误 |
+
+> **前端无法真实构建的说明（重要）**：本机 `node.exe` 被终端安全策略禁用（AppLocker/WDAC 级），
+> 既装不了依赖也跑不了 `vite build`。为不交付「从没人跑过的代码」，采取两条替代措施：
+> 1. **不引入 vue-router**，改为自研零依赖 hash 路由 `web/src/router.js`（接口形状对齐 vue-router 便于日后替换）；
+> 2. 用 `tools/vue-static-check/` 一组静态校验替代编译期检查，并**先自检校验器本身**（用临时生成的坏样本
+>    验证它确实会报错）再使用。**交付前仍应在能装 node 的机器上执行 `npm ci && npm run build` 复核一遍。**
 
 ### 容器形态（`scripts/docker-verify.sh`）
 **结果：8 / 8 通过**（在 Ubuntu 24.04 + Docker 29.1.3 x86_64 实测）
@@ -293,7 +325,26 @@ RuleNotes → 重启 → 表被自动补建、无报错、备注功能可用。
 | `ef3e2d2` | 资源管理器式目录树、新建文档独立列、附件与提取接口预留 |
 | `26f0b13` | Windows 桌面托盘插件 + 交付打包 |
 | `9e88271` | 提取规则改为目录+文件（备注/上传/跨文件夹复制）+ 文档跨文件夹复制 |
-| （本轮） | EF Migrations + 旧库 Baseline；列表查询下推 SQL；`_trash` 回收站；`/api/projects/tree` |
+| `26f0b13`… | EF Migrations + 旧库 Baseline；列表查询下推 SQL；`_trash` 回收站；`/api/projects/tree` |
+| **（本轮，未推送）** | **鉴权体系**：双通道认证 + 递进权限 + 数据级可见性过滤 + 权限管理 API；模板复制选目标路径；前端改版（零依赖路由 + 登录/403/回收站/令牌/用户/组/授权页） |
+
+> **本轮改动尚未推送到 GitHub。**
+>
+> 本机工作副本是从 zip 解压而来，没有 `.git`；且企业环境禁用了 git 的 https remote helper
+> （`remote helper 'https' aborted session`），因此推送走 **GitHub REST API**（详见
+> `OfficeTool-改造设计-v1.md` 第 11 节「推送流程」）。
+>
+> **当前阻塞**：换发后的 PAT **可读不可写** —— `GET /user` → 200（`login=koliol`）、读取仓库/ref 均 200，
+> 但 `POST /repos/koliol/officetool/git/blobs` → **403 `Resource not accessible by personal access token`**，
+> 即 fine-grained PAT 缺 **Contents: Read and write**。
+> （注意：`/repos` 响应里的 `permissions` 字段是**用户对该仓库的角色**，不是令牌授权，别被它误导。）
+> 修好后执行 `GH_TOKEN=… python _push/gh_push.py --apply` 即可（约 63 次 API 调用）。
+> **远端完全未被改动**：第 1 个 blob 就失败，脚本随即退出，未建任何 tree/commit，`main` 仍是 `1747a87d`。
+>
+> **推送前侦察已完成**（对远端 tree 逐文件比对 blob SHA）：远端 HEAD `1747a87d67a1`（`2026-09-13`）、
+> 103 个 blob；本地 134 个文件；**新增 31 / 修改 32 / 未改动 71 / 远端独有 0**。
+> 71 个文件与远端字节级相同 → **基线一致**，且本次为**纯增量**（无需删除远端任何文件）。
+> 仓库是 public，只读侦察可匿名进行（限额 60 次/小时）。
 
 ---
 
@@ -305,8 +356,18 @@ RuleNotes → 重启 → 表被自动补建、无报错、备注功能可用。
 3. **提取规则只有占位**：规则文件需要按业务实际格式上传（当前白名单较宽，
    可用 `Upload:RuleExtensions` 收窄）；`Extraction:Rules` 配置数组已废弃。
 4. **群晖实机未验证**：按 `docs/deployment-synology.md` 执行，权限（PUID/ACL/附加组）是主要变数。
-5. **无鉴权**：任何人可访问者都拥有全部权限。必须限制内网可达，勿做公网端口转发。
-6. **数据库升级已改为 EF Migrations**（本轮）：
+5. **鉴权已落地（本轮）**：三种通道统一到同一张应用 Cookie ——
+   - **SSO**（Negotiate/Kerberos，域环境）、**本地账户**（表单登录）、**Bearer 访问令牌**（外部脚本/工具）；
+   - 行为开关 `Auth:Enabled`（默认 true）；**设 `false` 可退回「全放行」**（`UserAccess.Unrestricted`），
+     用于内网临时排障，但同步与结构性维护仍按超管语义处理；
+   - 权限语义为**四级递进** `None < Read < Write < Manage < RuleManage`（`AclEntries.Level`），
+     项目级条目可被**检项级条目覆盖**（含显式 `None` 黑名单例外）；
+   - **数据级可见性过滤**：模板/文档列表下推 SQL、项目树与项目列表裁剪、规则/附件/回收站判权；
+   - 权限管理 API `/api/admin/*` 仅 `Users.IsSystemAdmin` 可用（**每次请求回查实体**，不信任 Cookie 声明）；
+   - 首次部署自动生成本地超管（密码打印在启动日志中，仅一次），可自助改密。
+   - **部署前务必设定** `Auth__*` 相关环境变量并阅读 `docs/deployment-synology.md` 第七节。
+   - 已知限制见下方「待办」。
+6. **数据库升级已改为 EF Migrations**：
    - 迁移在 `src/OfficeTool.Api/Data/Migrations/`
    - 启动走 `DatabaseInitializer`：空库 `Migrate()`；**旧 EnsureCreated 库自动 Baseline**
      （标记 `0001_InitialCreate` 已应用）后再跑增量；不再手写 `CREATE TABLE IF NOT EXISTS`
@@ -320,10 +381,22 @@ RuleNotes → 重启 → 表被自动补建、无报错、备注功能可用。
    并为 `Documents.CreatedAt`、`Templates.ModifiedAt` 建索引。
 9. **前端树一次拉全**（本轮）：`GET /api/projects/tree`，`store.loadProjects` 不再 N+1。
 10. **`ContentCatalogService` 仍偏大**：已抽出 `TrashService`，完整拆 Template/Document 服务待后续。
-11. **前端回收站 UI**：API 已就绪，管理界面待做（当前只能用接口/共享盘 `_trash`）。
+11. **前端回收站 UI 已完成（本轮）**：`web/src/views/TrashView.vue`，支持列表 / 恢复 / 彻底删除。
 12. **前端包体积**：Element Plus 全量引入，约 1.27MB（gzip 410KB）。内网可接受；可改按需引入优化。
 13. **`npm audit` 告警**：esbuild/vite 开发服务器相关，仅影响本地 dev server，不影响构建产物；升级 vite 8 为破坏性变更，暂缓。
-14. 二期项：登录鉴权 / 角色权限 / 在线预览 / 版本管理 / 审批流 / AI 生成模板。
+14. 二期项：**登录鉴权 / 角色权限（已在本轮完成）** / 在线预览 / 版本管理 / 审批流 / AI 生成模板。
+
+### 鉴权相关的已知缺口（本轮，交付前留意）
+
+| 项 | 说明 |
+|---|---|
+| 前端未经真实构建 | `node.exe` 被禁，只做了静态校验。**交付前应在能装 node 的机器上 `npm ci && npm run build`** |
+| Negotiate SSO 未实机验证 | 需域环境 + keytab + FQDN 访问，本地无法验证；已保留表单登录兜底 |
+| `MustChangePassword` 仅为提示，未强制 | 本地账号初始密码由管理员转述，中途可能被第三方看到；**有意不强制**——强制改密需白名单放行 `change-password` 等端点，一旦有误会把账号彻底锁死，内网工具收益不抵风险 |
+| 群晖实机未验证 | 与改造前一致，NAS 现场（共享文件夹 ACL、反向代理）仍是唯一未验证环节 |
+| 授权矩阵视图 | 当前权限管理页是「条目列表 + 筛选」，超管以外场景够用；批量配置（几十组 × 几十项目）需矩阵视图 |
+| 本地账户自助注册 | 当前不支持（首次部署由系统生成超管），是否需要待定 |
+| 端口/子路径部署 | 路由改用 hash 后挂在 `/officetool` 之类子路径下不会失效，但未实测 |
 
 ### 已知行为约定（非缺陷）
 - 同名模板重复上传 → 409，需先重命名或删除（不静默覆盖）。

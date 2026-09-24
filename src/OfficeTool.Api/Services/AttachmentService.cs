@@ -1,5 +1,6 @@
 using OfficeTool.Api.Contracts;
 using OfficeTool.Core.Abstractions;
+using OfficeTool.Core.Models;
 using OfficeTool.Core.Options;
 using OfficeTool.Core.Services;
 
@@ -23,7 +24,9 @@ public sealed class AttachmentService(
     StorageOptions storageOptions,
     UploadOptions uploadOptions,
     OperationLogService logs,
-    TrashService trash)
+    TrashService trash,
+    RequestContext request,
+    IAccessControlService access)
 {
     private readonly ProjectCatalogService _catalog = catalog;
     private readonly PathLayout _layout = layout;
@@ -32,12 +35,18 @@ public sealed class AttachmentService(
     private readonly UploadOptions _upload = uploadOptions;
     private readonly OperationLogService _logs = logs;
     private readonly TrashService _trash = trash;
+    private readonly RequestContext _request = request;
+    private readonly IAccessControlService _access = access;
+
+    private Task<UserAccess> CurrentAccessAsync(CancellationToken ct) => _access.ResolveAccessAsync(_request, ct);
 
     /// <summary>列出某项目/检项下的全部附件（按修改时间倒序）。</summary>
     public async Task<IReadOnlyList<AttachmentDto>> ListAsync(
         string projectName, string checkName, CancellationToken ct = default)
     {
         var (project, check) = await _catalog.ResolveAsync(projectName, checkName, ct);
+        (await CurrentAccessAsync(ct)).RequireRead(check.Id, $"{project.Name}/{check.Name}");
+
         var directory = _layout.AttachmentDirectory(project.Name, check.Name);
 
         if (!_store.DirectoryExists(directory))
@@ -62,6 +71,7 @@ public sealed class AttachmentService(
         CancellationToken ct = default)
     {
         var (project, check) = await _catalog.ResolveAsync(projectName, checkName, ct);
+        (await CurrentAccessAsync(ct)).Require(check.Id, AccessLevel.Write, "上传附件", $"{project.Name}/{check.Name}");
 
         if (declaredSize > _upload.MaxSizeBytes)
         {
@@ -115,6 +125,8 @@ public sealed class AttachmentService(
         string projectName, string checkName, string fileName, CancellationToken ct = default)
     {
         var (project, check) = await _catalog.ResolveAsync(projectName, checkName, ct);
+        (await CurrentAccessAsync(ct)).Require(check.Id, AccessLevel.Manage, "删除附件", $"{project.Name}/{check.Name}");
+
         var safeName = NameValidator.ValidateFileName(fileName);
 
         var fullPath = PathGuard.CombineUnderRoot(
@@ -146,6 +158,7 @@ public sealed class AttachmentService(
     public async Task ExtractAsync(ExtractRequest request, CancellationToken ct = default)
     {
         var (project, check) = await _catalog.ResolveAsync(request.Project, request.Check, ct);
+        (await CurrentAccessAsync(ct)).Require(check.Id, AccessLevel.Write, "提取附件", $"{project.Name}/{check.Name}");
 
         var attachmentName = NameValidator.ValidateFileName(request.AttachmentFileName);
         var attachmentPath = PathGuard.CombineUnderRoot(

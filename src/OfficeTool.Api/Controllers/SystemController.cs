@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OfficeTool.Api.Contracts;
@@ -28,13 +29,23 @@ public sealed class SystemController(
     private readonly ContentCatalogService _content = content;
     private readonly CredentialProtector _protector = protector;
 
+    /// <summary>
+    /// 存活探针。**必须匿名可达**。
+    ///
+    /// 它同时被三处使用：Dockerfile 的 HEALTHCHECK、反向代理/负载均衡的探活、
+    /// 以及部署脚本的就绪等待。一旦要求认证，容器会永远处于 unhealthy，
+    /// compose 的 depends_on: service_healthy 会直接卡死，反代也不会转发流量。
+    ///
+    /// 因此这里的出参刻意保持最小：只有存活状态、服务器本地时间和存储可用性，
+    /// 不含任何路径、项目名或配置内容。
+    /// </summary>
     [HttpGet("health")]
+    [AllowAnonymous]
     public IActionResult Health() => Ok(new
     {
         status = "ok",
         time = DateTime.Now,
         storeAvailable = _store.IsAvailable,
-        storeType = _store.GetType().Name,
     });
 
     [HttpGet("system/config")]

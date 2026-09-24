@@ -6,7 +6,22 @@ public sealed record CreateProjectRequest(string Name);
 
 public sealed record CreateCheckRequest(string Name);
 
-public sealed record CopyTemplateRequest(string Project, string Check, string SourceFileName, string? NewFileName);
+/// <summary>
+/// 复制模板。
+///
+/// <paramref name="TargetProject"/> / <paramref name="TargetCheck"/> 留空时表示**同目录复制**，
+/// 沿用旧行为（必然重名，因此总是追加「_副本」）；给了目标则表示跨目录复制，
+/// 与文档复制保持一致的语义（沿用原名，撞名才加「_副本」）。
+///
+/// 目标只接受项目/检项编码 —— 路径由服务端拼装，前端无法构造越界路径。
+/// </summary>
+public sealed record CopyTemplateRequest(
+    string Project,
+    string Check,
+    string SourceFileName,
+    string? NewFileName,
+    string? TargetProject = null,
+    string? TargetCheck = null);
 
 public sealed record RenameRequest(string Project, string Check, string FileName, string NewFileName);
 

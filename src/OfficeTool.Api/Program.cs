@@ -1,6 +1,10 @@
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
+using OfficeTool.Api.Contracts;
+using OfficeTool.Api.Controllers;
 using OfficeTool.Api.Data;
 using OfficeTool.Api.Middleware;
 using OfficeTool.Api.Services;
@@ -36,9 +40,13 @@ uploadOptions.WithDefaults();
 var pluginOptions = new DesktopPluginOptions();
 builder.Configuration.GetSection(DesktopPluginOptions.SectionName).Bind(pluginOptions);
 
+var authOptions = new AuthOptions();
+builder.Configuration.GetSection(AuthOptions.SectionName).Bind(authOptions);
+
 builder.Services.AddSingleton(storageOptions);
 builder.Services.AddSingleton(uploadOptions);
 builder.Services.AddSingleton(pluginOptions);
+builder.Services.AddSingleton(authOptions);
 
 // ── 请求体大小上限（上传 100MB，留出余量） ────────────────────────────
 builder.WebHost.ConfigureKestrel(options =>
@@ -57,6 +65,124 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddMemoryCache();
+
+// 转发用 scheme 名。只在这个文件里用，不对外暴露。
+const string AdaptiveScheme = "Adaptive";
+
+// ── 鉴权 ──────────────────────────────────────────────────────────────
+//
+// 四条通道：
+//   1. Cookie（浏览器默认）—— SSO 与本地账户最终都落到这张票，后续请求只认它
+//   2. Negotiate —— 仅挂在 GET /api/auth/sso 上，成功后转签 Cookie
+//   3. ApiToken —— Bearer 令牌，供外部工具 / 脚本使用（桌面插件不需要）
+//   4. 全部关闭 —— Auth:Enabled=false，回到内网可信形态
+//
+// 为什么不让 Negotiate 做默认方案：它每个请求都要 401 握手，
+// 且 EnableLdap 的组查询会随嵌套组数量放大延迟。
+//
+// 默认 scheme 是一个转发器：带 Authorization 头的请求交给 ApiToken，
+// 其余交给 Cookie。二者的 principal 用同一套 ClaimTypes.Name，
+// 下游 IAccessControlService 无需区分请求来自浏览器还是插件。
+builder.Services
+    .AddAuthentication(options =>
+    {
+        options.DefaultScheme = AdaptiveScheme;
+        options.DefaultChallengeScheme = AdaptiveScheme;
+    })
+    .AddPolicyScheme(AdaptiveScheme, "Cookie 或 ApiToken", options =>
+    {
+        options.ForwardDefaultSelector = context =>
+            context.Request.Headers.ContainsKey(Microsoft.Net.Http.Headers.HeaderNames.Authorization)
+                ? ApiTokenDefaults.Scheme
+                : CookieAuthenticationDefaults.AuthenticationScheme;
+    })
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, ApiTokenAuthenticationHandler>(
+        ApiTokenDefaults.Scheme, options => { })
+    .AddCookie(options =>
+    {
+        options.Cookie.Name = "OfficeTool.Auth";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.SlidingExpiration = true;
+        options.ExpireTimeSpan = TimeSpan.FromHours(Math.Max(1, authOptions.CookieHours));
+
+        // 接口性质：未认证返回 401，而不是重定向到登录页（前端自己决定跳哪）
+        options.Events.OnRedirectToLogin = context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        };
+
+        options.Events.OnRedirectToAccessDenied = context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        };
+    })
+    .AddNegotiate(options =>
+    {
+        // Linux 上的 Kerberos 不返回任何角色/组信息，必须显式查 LDAP 才能拿到组。
+        // 这是能否实现「按域分组授权」的前提，漏掉则所有人都没有任何授权。
+        if (OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(authOptions.Domain))
+        {
+            return;
+        }
+
+        // 一律用 settings 重载：IgnoreNestedGroups 只在 LdapSettings 上，
+        // 简单的 EnableLdap(domain) 重载没有它。
+        options.EnableLdap(settings =>
+        {
+            settings.Domain = authOptions.Domain;
+
+            // 域很大或嵌套很深时，递归解析嵌套组会显著拖慢登录
+            settings.IgnoreNestedGroups = authOptions.IgnoreNestedGroups;
+
+            // 不配机器账号时用已认证用户自身的上下文查 LDAP（多数域够用）。
+            // 域禁用了匿名/用户上下文查询时才需要显式机器账号。
+            if (!string.IsNullOrWhiteSpace(authOptions.LdapMachineAccountName))
+            {
+                settings.MachineAccountName = authOptions.LdapMachineAccountName;
+                settings.MachineAccountPassword = authOptions.LdapMachineAccountPassword;
+            }
+        });
+    });
+
+builder.Services.AddAuthorization(options =>
+{
+    // 它只是粗筛：真正的判定在 AdminService.RequireAdminAsync 里读数据库。
+    // 声明在签发时就固定了，管理员刚改完别人的超管位时声明不会同步变化。
+    if (authOptions.Enabled)
+    {
+        options.AddPolicy(AdminPolicy.Name, policy => policy.RequireRole(AdminPolicy.Role));
+    }
+    else
+    {
+        // 鉴权关闭时必须让请求<strong>穿过</strong>策略到达 AdminService，
+        // 由它返回「鉴权未启用」的 409 提示。否则管理员只会看到一个
+        // 没有任何解释的 401 —— 而在这个形态下没有人能通过认证。
+        options.AddPolicy(AdminPolicy.Name, policy => policy.RequireAssertion(_ => true));
+    }
+
+    if (!authOptions.Enabled)
+    {
+        // 内网可信形态：不设 FallbackPolicy，等价于全部放行。
+        // 适用未接入域、且确认只有可信内网可达的部署；关闭后任何人都是管理员，
+        // 前提是该部署绝不暴露到公网。
+        return;
+    }
+
+    // 默认要求已认证。/api/auth/* 由各自的 [AllowAnonymous] 放行，静态资源在认证之前处理。
+    // 不加 FallbackPolicy 的话，忘记标 [Authorize] 的新控制器会静默裸奔。
+    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+});
+
+builder.Services.AddScoped<IAccessControlService, AccessControlService>();
+builder.Services.AddScoped<UserDirectoryService>();
+builder.Services.AddScoped<ApiTokenService>();
+builder.Services.AddScoped<AdminService>();
 
 // Data Protection：Docker/群晖部署时必须把密钥环放到持久卷上，
 // 否则容器重建后 Smb/Storage:EncryptedPassword 将无法解密。
@@ -135,6 +261,20 @@ using (var scope = app.Services.CreateScope())
     // EF Migrations + 旧 EnsureCreated 库 Baseline（替代原先的 EnsureCreated + 手写补表）
     await DatabaseInitializer.InitializeAsync(db, app.Logger);
 
+    // 首次部署引导：Users 表为空时创建本地超管。
+    // 必须有这个逃生舱——ACL 配错导致全员无权限时，仍要有人能进去修。
+    if (authOptions.Enabled)
+    {
+        var directory = scope.ServiceProvider.GetRequiredService<UserDirectoryService>();
+        var bootstrapped = await directory.EnsureBootstrapAdminAsync();
+
+        if (bootstrapped is not null)
+        {
+            app.Logger.LogWarning(
+                "首次部署：本地超级管理员已创建。初始密码仅在本次启动日志中出现一次，请立即登录并修改。");
+        }
+    }
+
     // 主动校验存储根是否可见/可写。群晖上最常见的事故就是卷没映射对，
     // 与其等用户上传时报错，不如启动就喊出来。
     var fileStore = scope.ServiceProvider.GetRequiredService<IFileStore>();
@@ -191,6 +331,11 @@ app.UseCors("internal");
 // 单机部署时直接托管前端构建产物（wwwroot）
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// 认证/授权放在静态文件之后：SPA 的 index.html 与静态资源必须匿名可取，
+// 否则未登录时连登录页都打不开。/api/* 不受影响，仍会被 FallbackPolicy 拦截。
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 

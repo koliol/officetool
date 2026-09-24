@@ -8,6 +8,7 @@ import {
   templateApi,
 } from '../api'
 import { useAppStore } from '../store'
+import { useAuthStore, LEVELS } from '../auth'
 import OpenFileDialog from './OpenFileDialog.vue'
 import AttachmentDialog from './AttachmentDialog.vue'
 import CopyToDialog from './CopyToDialog.vue'
@@ -19,6 +20,7 @@ const props = defineProps({
 })
 
 const store = useAppStore()
+const auth = useAuthStore()
 
 const rows = ref([])
 const total = ref(0)
@@ -30,7 +32,7 @@ const openDialog = reactive({ visible: false, file: null })
 /** 模板列表里「上传附件」的落点；文档列表里会额外带上目标文档 */
 const attachmentDialog = reactive({ visible: false, project: '', check: '', targetDocument: null })
 
-/** 文档「复制到…」：目标路径由用户在弹窗里选择，而不是复制到当前文件夹 */
+/** 文档/模板「复制到…」：目标路径由用户在弹窗里选择，而不是复制到当前文件夹 */
 const copyDialog = reactive({ visible: false, project: '', check: '', fileNames: [] })
 
 const filters = reactive({
@@ -46,6 +48,26 @@ const filters = reactive({
 
 const isTemplates = computed(() => props.kind === 'templates')
 const title = computed(() => (isTemplates.value ? '模板' : '文档'))
+
+/**
+ * 权限门（仅决定按钮是否显示/可点；真正的拦截在服务端）。
+ *
+ * 逐行按 `项目/检项` 判定，而不是整页判定：同一个人可能对 A 项目有编辑权、
+ * 对 B 项目只有只读权，整页放行会让他看到点了就报 403 的按钮。
+ */
+const canWriteRow = (row) => auth.levelOfScope(row.project, row.check) >= LEVELS.Write
+const canManageRow = (row) => auth.levelOfScope(row.project, row.check) >= LEVELS.Manage
+
+/** 当前筛选范围上的写权限（上传模板需要它） */
+const canWriteScope = computed(
+  () =>
+    Boolean(filters.project && filters.check) &&
+    auth.levelOfScope(filters.project, filters.check) >= LEVELS.Write,
+)
+
+/** 整列入口的显示条件：任何一处分区都没有写权时，整列隐藏而不是全灰 */
+const showWriteColumns = computed(() => auth.canAnyWrite)
+const showDeleteAction = computed(() => auth.canAnyManage)
 
 const checkOptions = ref([])
 
@@ -181,6 +203,12 @@ async function customUpload(option) {
     return
   }
 
+  if (!canWriteScope.value) {
+    ElMessage.error('你对当前「项目 / 检项」没有编辑权限，无法上传模板')
+    uploading.value = false
+    return
+  }
+
   uploading.value = true
   try {
     await templateApi.upload(filters.project, filters.check, option.file, (e) => {
@@ -232,7 +260,7 @@ async function createDocument(row) {
   }
 }
 
-/** 打开文档「复制到…」弹窗，让用户选择目标项目/检项 */
+/** 打开「复制到…」弹窗，让用户选择目标项目/检项 */
 function openCopyTo(row) {
   if (!row?.project || !row?.check) {
     ElMessage.warning('该行缺少项目/检项信息，无法复制')
@@ -265,7 +293,13 @@ function openAttachment(row) {
   attachmentDialog.visible = true
 }
 
-async function copyTemplate(row) {
+/**
+ * 原地复制一份模板。
+ *
+ * 与「复制到…」并存而不是合并：做模板变体（在同一目录里改一版）是高频操作，
+ * 走弹窗要先选项目再选检项，两次选择对高频动作来说太重。
+ */
+async function duplicateTemplate(row) {
   try {
     const created = await templateApi.copy({
       project: row.project,
@@ -368,10 +402,10 @@ function onRowAction(command, row) {
   switch (command) {
     case 'copyPath':
       return copyPath(row)
-    case 'copyTemplate':
-      return copyTemplate(row)
     case 'copyTo':
       return openCopyTo(row)
+    case 'duplicate':
+      return duplicateTemplate(row)
     case 'rename':
       return rename(row)
     default:
@@ -467,18 +501,22 @@ defineOptions({ name: 'FilePanel' })
       <span class="spacer" />
 
       <el-upload
-        v-if="isTemplates"
+        v-if="isTemplates && showWriteColumns"
         :show-file-list="false"
         :before-upload="beforeUpload"
         :http-request="customUpload"
         accept=".docx,.xlsx,.pptx,.docm,.xlsm,.pptm"
       >
-        <el-button type="primary" :loading="uploading">
+        <el-button type="primary" :loading="uploading" :disabled="!canWriteScope">
           <el-icon><Upload /></el-icon>&nbsp;上传模板
         </el-button>
       </el-upload>
 
-      <el-button v-if="isTemplates" :loading="syncing" @click="syncMetadata">
+      <el-button
+        v-if="isTemplates && showDeleteAction"
+        :loading="syncing"
+        @click="syncMetadata"
+      >
         <el-icon><Refresh /></el-icon>&nbsp;同步元数据
       </el-button>
 
@@ -517,24 +555,35 @@ defineOptions({ name: 'FilePanel' })
 
       <!--
         需求：新建文档不再埋在「更多」里 —— 独立成一列，按钮足够醒目。
-        上传附件紧随其后，也占独立一列（与模板同样是上传入口，但附件单独存放）。
+        整列在没有任何编辑权时隐藏：给只读用户摆一列全灰的按钮，
+        除了让他以为自己被针对之外没有用处。
       -->
-      <el-table-column v-if="isTemplates" label="新建文档" width="102" fixed="right">
+      <el-table-column v-if="isTemplates && showWriteColumns" label="新建文档" width="102" fixed="right">
         <template #default="{ row }">
-          <el-button type="primary" size="small" @click="createDocument(row)">新建文档</el-button>
+          <el-button
+            type="primary"
+            size="small"
+            :disabled="!canWriteRow(row)"
+            @click="createDocument(row)"
+          >
+            新建文档
+          </el-button>
         </template>
       </el-table-column>
+
       <!--
         附件列在**两个列表都有**：装了桌面插件后点文件名会直接跳转协议、不再弹窗，
         附件入口不能只挂在弹窗里（否则装了插件就再也传不了附件）。
       -->
-      <el-table-column label="附件" width="102" fixed="right">
+      <el-table-column v-if="showWriteColumns" label="附件" width="102" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" @click="openAttachment(row)">上传附件</el-button>
+          <el-button size="small" :disabled="!canWriteRow(row)" @click="openAttachment(row)">
+            上传附件
+          </el-button>
         </template>
       </el-table-column>
 
-      <el-table-column label="操作" width="148" fixed="right">
+      <el-table-column label="操作" :width="showDeleteAction ? 148 : 120" fixed="right">
         <template #default="{ row }">
           <!-- 详情弹窗永远可打开：路径、协议链接、上传附件入口都在里面 -->
           <el-button link type="primary" size="small" @click="showDetail(row)">详情</el-button>
@@ -545,14 +594,50 @@ defineOptions({ name: 'FilePanel' })
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="copyPath">复制路径</el-dropdown-item>
-                <el-dropdown-item v-if="isTemplates" command="copyTemplate">复制模板</el-dropdown-item>
-                <!-- 文档复制：目标路径由用户在弹窗里选，不是复制到当前文件夹 -->
-                <el-dropdown-item v-else command="copyTo">复制到…</el-dropdown-item>
-                <el-dropdown-item command="rename" divided>重命名</el-dropdown-item>
+
+                <!--
+                  模板与文档现在都走「复制到…」：目标项目/检项由用户在弹窗里选，
+                  不再只能复制到当前文件夹。模板额外保留「原地复制一份」，
+                  因为做模板变体是高频操作，不该每次都走两段下拉选择。
+                -->
+                <el-dropdown-item
+                  v-if="showWriteColumns"
+                  :disabled="!canWriteRow(row)"
+                  command="copyTo"
+                >
+                  复制到…
+                </el-dropdown-item>
+
+                <el-dropdown-item
+                  v-if="isTemplates && showWriteColumns"
+                  :disabled="!canWriteRow(row)"
+                  command="duplicate"
+                >
+                  原地复制一份
+                </el-dropdown-item>
+
+                <el-dropdown-item
+                  v-if="showWriteColumns"
+                  :disabled="!canWriteRow(row)"
+                  divided
+                  command="rename"
+                >
+                  重命名
+                </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-          <el-button link type="danger" size="small" @click="remove(row)">删除</el-button>
+
+          <el-button
+            v-if="showDeleteAction"
+            link
+            type="danger"
+            size="small"
+            :disabled="!canManageRow(row)"
+            @click="remove(row)"
+          >
+            删除
+          </el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -579,10 +664,10 @@ defineOptions({ name: 'FilePanel' })
       :target-document="attachmentDialog.targetDocument"
     />
 
-    <!-- 文档「复制到…」：目标项目/检项由用户选择 -->
+    <!-- 「复制到…」：模板与文档共用，目标项目/检项由用户选择 -->
     <CopyToDialog
       v-model:visible="copyDialog.visible"
-      kind="document"
+      :kind="isTemplates ? 'template' : 'document'"
       :project="copyDialog.project"
       :check="copyDialog.check"
       :file-names="copyDialog.fileNames"

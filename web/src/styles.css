@@ -43,6 +43,26 @@ body,
 .app-body {
   flex: 1;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/*
+  各页面挂在 .app-body 之下。写成 flex 列容器而不是 height:100%：
+  页面上方可能还有若干条警告（初始化失败、权限加载失败），
+  用 height:100% 会把页面挤出可视区，底部永远看不到。
+*/
+.app-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-view > * {
+  flex: 1;
+  min-height: 0;
 }
 
 .app-aside {

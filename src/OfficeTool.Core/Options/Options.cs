@@ -244,6 +244,58 @@ public sealed class DesktopPluginOptions
 }
 
 /// <summary>
+/// 鉴权配置。
+///
+/// 关键取舍：<see cref="Enabled"/> 为 false 时完全关闭鉴权（回到「内网可信」形态）。
+/// 适用场景是未接入域、且确认只有可信内网可达的部署 —— 例如先跑起来验证功能，
+/// 再逐步补授权配置。关闭后任何能访问该端口的人都是系统管理员，
+/// 因此<strong>必须同时保证服务不暴露到公网</strong>，也不要做端口转发。
+///
+/// 注意：桌面插件不构成开启此开关的理由。它只处理 <c>officetool://</c> 协议、
+/// 不调用任何接口，因此无论鉴权是否开启都能正常工作。
+/// </summary>
+public sealed class AuthOptions
+{
+    public const string SectionName = "Auth";
+
+    /// <summary>总开关。false = 关闭全部鉴权与授权（内网可信形态）。</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// AD 域名，如 <c>contoso.com</c>。用于 Negotiate 的 <c>EnableLdap</c>：
+    /// Linux 上的 Kerberos **不返回任何组信息**，必须查 LDAP 才能拿到组。
+    /// </summary>
+    public string Domain { get; set; } = string.Empty;
+
+    /// <summary>查 LDAP 用的机器账号名（域里通常带 <c>$</c>）。留空则用已认证用户上下文。</summary>
+    public string LdapMachineAccountName { get; set; } = string.Empty;
+
+    /// <summary>机器账号密码。建议走环境变量注入，不要写进 appsettings。</summary>
+    public string LdapMachineAccountPassword { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 关闭嵌套组解析。域很大或嵌套很深时，递归解析会显著拖慢登录。
+    /// 关闭后只取用户直接所属的组。
+    /// </summary>
+    public bool IgnoreNestedGroups { get; set; }
+
+    /// <summary>应用 Cookie 有效期（小时）。SSO 与本地账户共用。</summary>
+    public int CookieHours { get; set; } = 8;
+
+    /// <summary>ACL 解析结果缓存分钟数。</summary>
+    public int AclCacheMinutes { get; set; } = 5;
+
+    /// <summary>组列表缓存分钟数。AD 短暂不可达时降级用缓存，避免全员被锁在外面。</summary>
+    public int GroupCacheMinutes { get; set; } = 10;
+
+    /// <summary>Users 表为空时自动创建本地管理员（首次部署引导）。</summary>
+    public bool BootstrapLocalAdmin { get; set; } = true;
+
+    /// <summary>引导创建的本地管理员登录名。</summary>
+    public string BootstrapAdminName { get; set; } = "admin";
+}
+
+/// <summary>
 /// 提取规则**不再来自配置**。
 ///
 /// 早期版本把规则做成 <c>Extraction:Rules</c> 配置数组，但实际需求是：

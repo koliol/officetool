@@ -11,6 +11,12 @@ SHARE=/tmp/officetool-verify-share
 STATE_VOL=officetool-verify-state
 KEYS_VOL=officetool-verify-keys
 
+# 第 1~7 节验证的是「容器管道」：挂载、持久化、客户端视角路径、文件落盘。
+# 这些与被测的鉴权功能正交，而鉴权默认开启会让所有裸 curl 变成 401，
+# 把管道问题淹没在权限错误里。所以这一段显式关掉鉴权。
+# 开启形态单独在「第 8 节」验证 —— 那里有专门的用例，而不是顺带跑过。
+AUTH_OFF="Auth__Enabled=false"
+
 B="http://127.0.0.1:$PORT"
 PASS=0; FAIL=0
 chk() {
@@ -36,6 +42,7 @@ docker run -d --name "$NAME" \
   -p "$PORT:8080" \
   -e TZ=Asia/Shanghai \
   -e ASPNETCORE_ENVIRONMENT=Production \
+  -e "$AUTH_OFF" \
   -e 'Storage__ClientTemplatesRoot=\\NAS\OfficeDocs\Templates' \
   -e 'Storage__ClientDataRoot=\\NAS\OfficeDocs\Data' \
   -v "$SHARE:/data" \
@@ -103,6 +110,7 @@ docker run -d --name "$NAME" \
   -p "$PORT:8080" \
   -e TZ=Asia/Shanghai \
   -e ASPNETCORE_ENVIRONMENT=Production \
+  -e "$AUTH_OFF" \
   -e 'Storage__ClientTemplatesRoot=\\NAS\OfficeDocs\Templates' \
   -e 'Storage__ClientDataRoot=\\NAS\OfficeDocs\Data' \
   -v "$SHARE:/data" \
@@ -112,6 +120,116 @@ docker run -d --name "$NAME" \
 for i in $(seq 1 60); do curl -sS --max-time 2 "$B/api/health" >/dev/null 2>&1 && break; sleep 1; done
 rebuilt=$(curl -sS "$B/api/documents" | python3 -c 'import sys,json;print(json.load(sys.stdin)["total"])')
 chk "重建容器后文档数不变" "$before" "$rebuilt"
+
+# ── 第 8 节：鉴权开启形态 ────────────────────────────────────────────
+#
+# 前面 7 节都在 AUTH_OFF 下跑。鉴权是本项目的主要改造，必须单独验一遍，
+# 否则「默认开启鉴权」这个决定没有任何自动化证据支撑。
+#
+# 这一段不需要删数据卷：Users/Groups/AclEntries 都是新表，
+# 上一段以 AUTH_OFF 运行时不会往里写任何东西，所以这里仍是干净的首启状态。
+echo "═══ 8. 鉴权开启形态 ═══"
+docker rm -f "$NAME" >/dev/null 2>&1
+docker run -d --name "$NAME" \
+  -p "$PORT:8080" \
+  -e TZ=Asia/Shanghai \
+  -e ASPNETCORE_ENVIRONMENT=Production \
+  -e 'Auth__Enabled=true' \
+  -e 'Auth__BootstrapAdminName=admin' \
+  -e 'Storage__ClientTemplatesRoot=\\NAS\OfficeDocs\Templates' \
+  -e 'Storage__ClientDataRoot=\\NAS\OfficeDocs\Data' \
+  -v "$SHARE:/data" \
+  -v "$STATE_VOL:/app/state" \
+  -v "$KEYS_VOL:/app/keys" \
+  "$IMAGE" >/dev/null || { echo "容器启动失败"; exit 1; }
+
+for i in $(seq 1 60); do curl -sS --max-time 2 "$B/api/health" >/dev/null 2>&1 && break; sleep 1; done
+
+# 健康检查必须保持匿名：它同时被 docker healthcheck 与反向代理探活用，
+# 要求认证会让容器永远处于 unhealthy。
+chk "健康检查仍匿名可达" 200 "$(curl -sS -o /dev/null -w '%{http_code}' "$B/api/health")"
+
+# 业务接口必须要求认证。用 401 而不是 403：403 会证实资源存在。
+chk "未登录访问业务接口应 401" 401 "$(curl -sS -o /dev/null -w '%{http_code}' "$B/api/projects")"
+chk "未登录访问管理接口应 401" 401 "$(curl -sS -o /dev/null -w '%{http_code}' "$B/api/admin/users")"
+chk "未登录访问 me 应 401" 401 "$(curl -sS -o /dev/null -w '%{http_code}' "$B/api/auth/me")"
+
+# 首启应自动创建引导超管并把初始密码打进日志（逃生舱）。
+# 抓不到密码说明这一段没法继续，直接失败退出而不是静默跳过。
+BOOT_LINE=$(docker logs "$NAME" 2>&1 | grep -o '已创建本地超级管理员[^，]*，初始密码：[A-Za-z0-9]*' | tail -1)
+BOOT_PWD=$(echo "$BOOT_LINE" | sed 's/.*初始密码：//')
+if [ -z "$BOOT_PWD" ]; then
+  echo "  ✗ 未在日志中找到引导超管密码 —— 无法继续验证鉴权"
+  echo "    日志末尾："
+  docker logs "$NAME" 2>&1 | tail -20 | sed 's/^/      /'
+  FAIL=$((FAIL+1))
+else
+  echo "  ✓ 已自动创建引导超管（密码已从日志取得）"; PASS=$((PASS+1))
+
+  JAR=$(mktemp)
+  trap 'rm -f "$JAR"; cleanup' EXIT
+
+  chk "错误口令登录应 401" 401 \
+    "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$B/api/auth/login" \
+       -H 'Content-Type: application/json' -d '{"userName":"admin","password":"definitely-wrong"}')"
+
+  chk "正确口令登录应 200" 200 \
+    "$(curl -sS -o /dev/null -w '%{http_code}' -c "$JAR" -X POST "$B/api/auth/login" \
+       -H 'Content-Type: application/json' -d "{\"userName\":\"admin\",\"password\":\"$BOOT_PWD\"}")"
+
+  chk "带会话访问业务接口应 200" 200 \
+    "$(curl -sS -o /dev/null -w '%{http_code}' -b "$JAR" "$B/api/projects")"
+
+  chk "带会话访问管理接口应 200" 200 \
+    "$(curl -sS -o /dev/null -w '%{http_code}' -b "$JAR" "$B/api/admin/users")"
+
+  # 超管能列出用户，且应当看到自己
+  chk "管理接口能列出引导超管" "1" \
+    "$(curl -sS -b "$JAR" "$B/api/admin/users" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["items"]))' 2>/dev/null || echo 0)"
+
+  # 权限自检接口：此时应当没有项目，所以是 0 条告警
+  chk "权限自检可达" 200 \
+    "$(curl -sS -o /dev/null -w '%{http_code}' -b "$JAR" "$B/api/admin/health")"
+
+  # 令牌通道：颁发一枚，用它代替 Cookie 访问
+  TOK=$(curl -sS -b "$JAR" -X POST "$B/api/auth/tokens" \
+    -H 'Content-Type: application/json' -d '{"name":"docker-verify"}' \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("token",""))' 2>/dev/null || echo "")
+  if [ -z "$TOK" ]; then
+    echo "  ✗ 未能颁发访问令牌"; FAIL=$((FAIL+1))
+  else
+    chk "Bearer 令牌访问业务接口应 200" 200 \
+      "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOK" "$B/api/projects")"
+    chk "伪造令牌应 401" 401 \
+      "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer otk_forged_token_value' "$B/api/projects")"
+
+    TOK_ID=$(curl -sS -b "$JAR" "$B/api/auth/tokens" | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["id"])' 2>/dev/null || echo 0)
+    if [ "$TOK_ID" != "0" ]; then
+      chk "吊销令牌应 204" 204 "$(curl -sS -o /dev/null -w '%{http_code}' -b "$JAR" -X DELETE "$B/api/auth/tokens/$TOK_ID")"
+      chk "吊销后该令牌应 401" 401 \
+        "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOK" "$B/api/projects")"
+    fi
+  fi
+
+  # 普通用户（非超管）不能进管理接口。这是最容易漏的越权点：
+  # 策略只做粗筛，真判定要回查数据库。
+  NORMAL_PWD=$(curl -sS -b "$JAR" -X POST "$B/api/admin/users" \
+    -H 'Content-Type: application/json' \
+    -d '{"userName":"normaluser","displayName":"验证用普通用户","isSystemAdmin":false,"mustChangePassword":false}' \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("password",""))' 2>/dev/null || echo "")
+  if [ -z "$NORMAL_PWD" ]; then
+    echo "  ✗ 未能创建普通用户"; FAIL=$((FAIL+1))
+  else
+    JAR2=$(mktemp)
+    curl -sS -o /dev/null -c "$JAR2" -X POST "$B/api/auth/login" \
+      -H 'Content-Type: application/json' -d "{\"userName\":\"normaluser\",\"password\":\"$NORMAL_PWD\"}"
+    chk "普通用户访问管理接口应 403" 403 \
+      "$(curl -sS -o /dev/null -w '%{http_code}' -b "$JAR2" "$B/api/admin/users")"
+    chk "普通用户无授权时看不到任何项目" "0" \
+      "$(curl -sS -b "$JAR2" "$B/api/projects" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))' 2>/dev/null || echo -1)"
+    rm -f "$JAR2"
+  fi
+fi
 
 echo
 echo "═══ 结果：通过 $PASS / 失败 $FAIL ═══"

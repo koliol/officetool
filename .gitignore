@@ -35,3 +35,8 @@ officetool-share/
 .vs/
 .idea/
 .vscode/
+
+## 工具脚本运行产物（tools/vue-static-check 的 Python 字节码）
+__pycache__/
+*.pyc
+*.pyo

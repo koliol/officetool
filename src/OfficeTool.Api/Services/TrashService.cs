@@ -16,8 +16,34 @@ public sealed class TrashService(
     AppDbContext db,
     PathLayout layout,
     IFileStore store,
-    OperationLogService logs)
+    OperationLogService logs,
+    RequestContext request,
+    IAccessControlService access)
 {
+    private Task<UserAccess> CurrentAccessAsync(CancellationToken ct) => access.ResolveAccessAsync(request, ct);
+
+    /// <summary>
+    /// 回收站条目的权限校验。
+    ///
+    /// <see cref="TrashItem"/> 只有 <c>Project</c>/<c>Check</c> 两个字符串、没有外键，
+    /// 所以要先按名称反查检项 id 才能拿到等级。原项目/检项已被删除时 id 为 null，
+    /// 校验会直接失败 —— 这与其后 RestoreCatalogAsync 的「原项目已不存在」是同一个结论。
+    /// </summary>
+    private async Task RequireTrashAccessAsync(TrashItem item, string action, CancellationToken ct)
+    {
+        var current = await CurrentAccessAsync(ct);
+        if (current.IsSystemAdmin)
+        {
+            return;
+        }
+
+        var checkId = await db.Checks.AsNoTracking()
+            .Where(c => c.Project!.Name == item.Project && c.Name == item.Check)
+            .Select(c => (int?)c.Id)
+            .FirstOrDefaultAsync(ct);
+
+        current.Require(checkId, AccessLevel.Manage, action, $"{item.Project}/{item.Check}");
+    }
     /// <summary>把业务文件移入回收站并登记。调用方负责删除业务库中的活动记录。</summary>
     public async Task<TrashItemDto> MoveToTrashAsync(
         TrashKind kind,
@@ -85,6 +111,16 @@ public sealed class TrashService(
             q = q.Where(t => t.Project == project);
         }
 
+        // TrashItem 没有外键，可见性只能按「项目名 + 检项名」过滤。
+        // 拼接键与 UserAccess.ScopeKey 用同一个分隔符（\u001f 不会出现在合法编码里），
+        // 于是整段仍能翻译成 SQL —— 回收站条目可能很多，拉回内存再过滤会让分页的 total 失真。
+        var trashAccess = await CurrentAccessAsync(ct);
+        if (trashAccess.NeedsScopeFilter)
+        {
+            var scopes = trashAccess.AllowedScopes.ToList();
+            q = q.Where(t => scopes.Contains(t.Project + "\u001f" + t.Check));
+        }
+
         var total = await q.CountAsync(ct);
         var items = await q
             .OrderByDescending(t => t.DeletedAt)
@@ -100,6 +136,8 @@ public sealed class TrashService(
     {
         var item = await db.TrashItems.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException($"回收站条目不存在：{id}");
+
+        await RequireTrashAccessAsync(item, "从回收站恢复", ct);
 
         var trashPath = PathGuard.FromRelative(layout.TrashRoot, item.TrashRelativePath);
         if (!store.FileExists(trashPath))
@@ -141,6 +179,8 @@ public sealed class TrashService(
     {
         var item = await db.TrashItems.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException($"回收站条目不存在：{id}");
+
+        await RequireTrashAccessAsync(item, "彻底删除回收站条目", ct);
 
         var trashPath = PathGuard.FromRelative(layout.TrashRoot, item.TrashRelativePath);
         if (store.FileExists(trashPath))

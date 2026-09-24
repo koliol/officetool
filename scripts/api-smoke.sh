@@ -3,6 +3,11 @@
 # 可用环境变量指向不同环境：
 #   BASE_URL    默认 http://127.0.0.1:5080（容器部署可传 http://127.0.0.1:8080）
 #   SHARE_ROOT  默认 /home/ubuntu/officetool-share（须为服务端看到的存储根父目录）
+#
+# 鉴权（服务端 Auth:Enabled=true 时**必须**提供，否则全部用例会以 401 失败）：
+#   OFFICETOOL_TOKEN=otk_xxx                    直接用访问令牌
+#   OFFICETOOL_USER=admin OFFICETOOL_PASS=xxx   用账号登录，脚本内自动换 Cookie
+#   两个都不给 → 按「未开启鉴权」跑（对应 Auth:Enabled=false 的部署）
 set -u
 B=${BASE_URL:-http://127.0.0.1:5080}
 SHARE=${SHARE_ROOT:-/home/ubuntu/officetool-share}
@@ -21,15 +26,61 @@ chk() { # chk <描述> <期望> <实际>
 # 现在：独立临时目录 + 每次调用前清空 body，写不进去就立刻大声报错。
 WORK_DIR="$(mktemp -d)" || { echo "无法创建临时目录" >&2; exit 1; }
 BODY_FILE="$WORK_DIR/.response-body"
+COOKIE_JAR="$WORK_DIR/.cookies"
 trap 'rm -rf "$WORK_DIR"' EXIT
+
+# ── 鉴权凭据 ─────────────────────────────────────────────────────────
+# 用数组而不是拼接字符串：令牌里可能含特殊字符，拼进 shell 字符串会被拆词。
+# `${AUTH_ARGS[@]+...}` 的空数组展开是必需的 —— `set -u` 下 bash 4.4 之前
+# 直接展开空数组会报 unbound variable。
+AUTH_ARGS=()
+AUTH_MODE="未启用（按 Auth:Enabled=false 处理）"
+
+if [ -n "${OFFICETOOL_TOKEN:-}" ]; then
+  AUTH_ARGS=(-H "Authorization: Bearer $OFFICETOOL_TOKEN")
+  AUTH_MODE="访问令牌"
+elif [ -n "${OFFICETOOL_USER:-}" ] && [ -n "${OFFICETOOL_PASS:-}" ]; then
+  AUTH_ARGS=(-b "$COOKIE_JAR")
+  AUTH_MODE="账号口令（$OFFICETOOL_USER）"
+fi
 
 code() { # code <curl 参数...> → 输出 HTTP 状态码，响应体写入 $BODY_FILE
   # 先清空：即使本次写入失败也只会得到空 body，不会把上一次的响应当成本次结果
   : > "$BODY_FILE" || { echo "无法写入临时文件 $BODY_FILE" >&2; exit 1; }
-  curl -sS -o "$BODY_FILE" -w '%{http_code}' "$@" || true
+  curl -sS -o "$BODY_FILE" -w '%{http_code}' ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} "$@" || true
 }
 
 body() { cat "$BODY_FILE"; }
+
+echo "═══ 0. 鉴权前置检查 ═══"
+echo "     凭据方式: $AUTH_MODE"
+
+if [ -n "${OFFICETOOL_USER:-}" ] && [ -z "${OFFICETOOL_TOKEN:-}" ]; then
+  LOGIN_CODE=$(code -X POST "$B/api/auth/login" \
+    -H 'Content-Type: application/json' \
+    -d "{\"userName\":\"$OFFICETOOL_USER\",\"password\":\"$OFFICETOOL_PASS\"}" \
+    -c "$COOKIE_JAR")
+  if [ "$LOGIN_CODE" != "200" ]; then
+    echo "  ✗ 登录失败（HTTP $LOGIN_CODE）：$(body)" >&2
+    echo "    请确认账号口令，或改用 OFFICETOOL_TOKEN。" >&2
+    exit 1
+  fi
+  echo "  ✓ 登录成功，已取得会话 Cookie"
+fi
+
+ME_CODE=$(code "$B/api/auth/me")
+if [ "$ME_CODE" = "401" ]; then
+  echo "" >&2
+  echo "  ✗ /api/auth/me 返回 401 —— 服务端已开启鉴权，但本次运行没有可用凭据。" >&2
+  echo "    任选一种方式重跑：" >&2
+  echo "      OFFICETOOL_TOKEN=otk_xxx $0" >&2
+  echo "      OFFICETOOL_USER=admin OFFICETOOL_PASS='...' $0" >&2
+  echo "    （令牌可在网页「访问令牌」页生成；账号即登录本工具用的域账号或本地账号）" >&2
+  echo "" >&2
+  echo "    若这个部署本就不打算开鉴权，请确认配置里 Auth:Enabled=false。" >&2
+  exit 1
+fi
+echo "  ✓ /api/auth/me 可达（HTTP $ME_CODE）"
 
 echo "═══ 1. 健康检查与配置 ═══"
 chk "GET /api/health" 200 "$(code $B/api/health)"
@@ -137,8 +188,10 @@ chk "配置里附件/规则白名单都比模板宽" 200 "$(code $B/api/system/c
 echo "     模板 $(body | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d["allowedExtensions"]))') 项 / 附件 $(body | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d["attachmentExtensions"]))') 项 / 规则 $(body | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d["ruleExtensions"]))') 项"
 
 # 提取：契约已定、脚本未实现。参数不合法要被拦下，参数齐全则应返回 501 而不是 500。
-DOCNAME=$(curl -sS "$B/api/documents?project=QLS2409&check=SEC&pageSize=1" \
-  | python3 -c 'import sys,json;d=json.load(sys.stdin)["items"];print(d[0]["fileName"] if d else "")')
+# 这里必须走 code() 而不是裸 curl —— 裸 curl 不会带上鉴权头，
+# 开鉴权后会取到 401 的 body，json 解析直接炸在这里。
+code "$B/api/documents?project=QLS2409&check=SEC&pageSize=1"
+DOCNAME=$(body | python3 -c 'import sys,json;d=json.load(sys.stdin).get("items",[]);print(d[0]["fileName"] if d else "")')
 echo "     用于提取的目标文档: ${DOCNAME:-<无>}"
 chk "提取·缺失规则文件名 应 400" 400 "$(code -X POST $B/api/attachments/extract -H 'Content-Type: application/json' \
   -d '{"project":"QLS2409","check":"SEC","attachmentFileName":"检验记录.pdf","ruleFileName":"","targetDocumentFileName":"x.docx"}')"
@@ -154,7 +207,8 @@ echo "     返回码: $(body | python3 -c 'import sys,json;print(json.load(sys.s
 chk "删除附件(中文名)" 204 "$(code -X DELETE "$B/api/attachments?project=QLS2409&check=SEC&fileName=$(python3 -c "import urllib.parse;print(urllib.parse.quote('检验记录.pdf'))")")"
 chk "删除已不存在的附件 应 404" 404 "$(code -X DELETE "$B/api/attachments?project=QLS2409&check=SEC&fileName=$(python3 -c "import urllib.parse;print(urllib.parse.quote('检验记录.pdf'))")")"
 chk "删除目标文件夹的规则（备注应一并清除）" 204 "$(code -X DELETE "$B/api/extraction-rules?project=QLS2409&check=SEC2&fileName=$RULE_ENC")"
-chk "删除后该文件夹规则为空" "0" "$(curl -sS "$B/api/extraction-rules?project=QLS2409&check=SEC2" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')"
+code "$B/api/extraction-rules?project=QLS2409&check=SEC2"
+chk "删除后该文件夹规则为空" "0" "$(body | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')"
 
 echo "═══ 9. 文档复制到其他文件夹（不是复制到当前文件夹）═══"
 chk "复制文档到 QLS2409/SEC2" 200 "$(code -X POST $B/api/documents/copy -H 'Content-Type: application/json' \

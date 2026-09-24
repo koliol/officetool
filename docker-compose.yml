@@ -72,6 +72,33 @@ services:
       # 桌面插件安装包地址（可留空，界面会隐藏下载入口）
       DesktopPlugin__DownloadUrl: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\plugin\OfficeToolPlugin.exe'
 
+      # ── 鉴权与授权 ────────────────────────────────────────────────
+      #
+      # 默认开启。首次启动会自动建一个本地超管，初始密码只在容器日志里出现一次：
+      #   docker compose logs officetool | grep 初始密码
+      # 取出后登录（用户名见 AUTH_BOOTSTRAP_ADMIN），改密，然后去「用户组 / 授权配置」授权。
+      #
+      # 想先关掉鉴权把功能跑通，把 AUTH_ENABLED 设为 false。
+      # ⚠️ 关闭后**任何能访问该端口的人都是系统管理员**，务必确认 NAS 只在内网可达、
+      #    绝不做公网端口转发。
+      Auth__Enabled: "${AUTH_ENABLED:-true}"
+      Auth__BootstrapAdminName: "${AUTH_BOOTSTRAP_ADMIN:-admin}"
+
+      # AD 域名。**只有填了这一项才会去 LDAP 取所属组**。
+      # Linux 上的 Kerberos 不返回组信息，不配 LDAP 的话域用户能登录但拿不到任何授权。
+      # 未接入域的部署留空，只用本地账号。
+      Auth__Domain: "${AUTH_DOMAIN:-}"
+
+      # 查询 LDAP 的机器账号。多数 AD 禁止匿名查询，生产上基本都要填。
+      Auth__LdapMachineAccountName: "${AUTH_LDAP_USER:-}"
+      Auth__LdapMachineAccountPassword: "${AUTH_LDAP_PASSWORD:-}"
+
+      # 递归解析嵌套组。大域建议设 true 免得每次登录展开整棵组树。
+      Auth__IgnoreNestedGroups: "${AUTH_IGNORE_NESTED_GROUPS:-true}"
+
+      Auth__CookieHours: "${AUTH_COOKIE_HOURS:-8}"
+      Auth__AclCacheMinutes: "${AUTH_ACL_CACHE_MINUTES:-5}"
+
     volumes:
       # ① NAS 共享文件夹 → 模板与文档真正存放的位置
       #    群晖上通常是 /volume1/OfficeDocs

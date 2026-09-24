@@ -2,8 +2,39 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '../store'
+import { useAuthStore, LEVELS } from '../auth'
 
 const store = useAppStore()
+const auth = useAuthStore()
+
+/**
+ * 结构维护的权限门（与后端 ProjectCatalogService 的规则一一对应）。
+ *
+ * 新建项目只能由系统管理员做：项目刚创建时还没有任何检项，无从授权，
+ * 若按检项判权会出现「谁都建不了第一个项目」的死锁。
+ *
+ * 删除项目 / 新建检项要求「该项目下所有检项都有管理权」。前端只知道
+ * 可见的那些，所以这是有意保守的判断；真有看不到的检项时由服务端拒绝。
+ *
+ * 删除检项按该检项自身的等级判，粒度更细。
+ */
+const canCreateProject = computed(() => !auth.authEnabled || auth.isSystemAdmin)
+
+function canManageProject(projectId) {
+  return auth.canManageProjectStructure(projectId)
+}
+
+function canDeleteCheck(check) {
+  return auth.levelOfCheck(check.id) >= LEVELS.Manage
+}
+
+const currentProjectId = computed(
+  () => store.projects.find((p) => p.name === store.currentProject)?.id,
+)
+
+const canCreateCheck = computed(
+  () => Boolean(currentProjectId.value) && canManageProject(currentProjectId.value),
+)
 
 const projectDialog = reactive({ visible: false, name: '', busy: false })
 const checkDialog = reactive({ visible: false, name: '', busy: false })
@@ -51,7 +82,15 @@ const filteredProjects = computed(() => {
   return store.projects.filter((p) => p.name.toLowerCase().includes(kw))
 })
 
+/** 结构维护入口是否露出：无管理权的人不该看到一排点了报错的按钮 */
+const showStructureActions = computed(() => canCreateProject.value || auth.canAnyManage)
+
 async function openProjectDialog() {
+  if (!canCreateProject.value) {
+    ElMessage.warning('新建项目需要系统管理员权限（新项目尚未授权，无从按项目判权）')
+    return
+  }
+
   projectDialog.name = ''
   projectDialog.visible = true
 }
@@ -85,6 +124,12 @@ function openCheckDialog() {
     ElMessage.warning('请先选择项目')
     return
   }
+
+  if (!canCreateCheck.value) {
+    ElMessage.warning(`无权在「${store.currentProject}」下新建检项（需对该项目下所有检项具备管理权限）`)
+    return
+  }
+
   checkDialog.name = ''
   checkDialog.visible = true
 }
@@ -126,6 +171,11 @@ async function onNodeClick(data, node) {
 }
 
 async function removeProject(project) {
+  if (!canManageProject(project.id)) {
+    ElMessage.warning(`无权删除「${project.name}」（需对该项目下所有检项具备管理权限）`)
+    return
+  }
+
   try {
     await ElMessageBox.confirm(
       `确认删除项目 ${project.name}？目录非空时后端会拒绝删除。`,
@@ -145,6 +195,11 @@ async function removeProject(project) {
 }
 
 async function removeCheck(check) {
+  if (!canDeleteCheck(check)) {
+    ElMessage.warning(`无权删除检项「${check.name}」（需具备管理权限）`)
+    return
+  }
+
   try {
     await ElMessageBox.confirm(`确认删除检项 ${check.name}？`, '二次确认', {
       type: 'warning',
@@ -177,11 +232,11 @@ function expandAll() {
 
 <template>
   <div>
-    <div class="aside-actions">
-      <el-button type="primary" size="small" @click="openProjectDialog">
+    <div v-if="showStructureActions" class="aside-actions">
+      <el-button v-if="canCreateProject" type="primary" size="small" @click="openProjectDialog">
         <el-icon><FolderAdd /></el-icon>&nbsp;新建项目
       </el-button>
-      <el-button size="small" @click="openCheckDialog">
+      <el-button size="small" :disabled="!canCreateCheck" @click="openCheckDialog">
         <el-icon><Plus /></el-icon>&nbsp;新建检项
       </el-button>
     </div>
@@ -222,10 +277,22 @@ function expandAll() {
               {{ data.name }}
             </span>
             <span class="tree-actions">
-              <el-button v-if="node.level === 1" link size="small" @click.stop="removeProject(data)">
+              <el-button
+                v-if="node.level === 1 && canManageProject(data.id)"
+                link
+                size="small"
+                @click.stop="removeProject(data)"
+              >
                 删除
               </el-button>
-              <el-button v-else link size="small" @click.stop="removeCheck(data)">删除</el-button>
+              <el-button
+                v-else-if="node.level === 2 && canDeleteCheck(data)"
+                link
+                size="small"
+                @click.stop="removeCheck(data)"
+              >
+                删除
+              </el-button>
             </span>
           </span>
         </template>
