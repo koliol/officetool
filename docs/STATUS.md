@@ -335,8 +335,12 @@ RuleNotes → 重启 → 表被自动补建、无报错、备注功能可用。
 > | 新提交 | `d4065cade29f`「鉴权体系 + 模板复制选路径 + 前端改版」 |
 > | 父提交 | `1747a87d`（`Initial commit`）→ **fast-forward，历史完整保留** |
 > | 新 tree | `5fd94cea2ece` |
+> | 推送序列 | `d4065cad`（内容提交）→ `db56f8ed`（补记推送结论的纯文档提交） |
 > | 上传 | 63 个 blob（新增 31 + 修改 32），约 63 次 API 调用 |
 > | 回读校验 | 远端 134 blob / 本地 134 文件，**逐字节完全一致（差异 0）** |
+>
+> > ℹ️ 上表 SHA 是**内容提交**，不是远端当前 HEAD（之后会不断追加纯文档提交）。
+> > 判断远端是否最新请跑 `verify_remote.py`，别比对 SHA。
 >
 > **为什么走 REST API 而不是 git**：本机工作副本从 zip 解压而来没有 `.git`；且企业环境禁用了
 > git 的 https remote helper（`remote helper 'https' aborted session`）。推送工具在仓库外：
