@@ -1,0 +1,116 @@
+{
+  "version": "1.0",
+  "description": "APSS(LiQuilaz 颗粒计数器) Series Average Data Report 提取规则。officetool 内的\"PDF提取\"与独立脚本共用同一份规则。",
+
+  "anchors": {
+    "project_label": "Project name",
+    "sample_label": "Sample name",
+    "calibrated_regex": "Calibrated\\s+([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4}\\s+[0-9]{1,2}:[0-9]{2}:[0-9]{2}\\s*[AP]M)",
+    "calibrated_regex_note": "使用无名捕获组以保证 .NET 与 Python 正则均可编译（(?<dt>..) 是 .NET 专有语法）",
+    "series_header": "Series Date & Time",
+    "average_block": "Series Averages",
+    "average_column_header_starts_with": "Channel Size",
+    "average_column_header_must_contain": "Counts",
+    "value_not_labels": [
+      "Containers Pooled", "Dilution Factor", "Limits", "Sample #",
+      "Project name", "Sample name", "Series Date & Time", "Sampler:",
+      "Series Average Data Report", "Counts per container", "Channel Size"
+    ],
+    "value_not_labels_note": "标签行本身就是空值时（如操作员把 Sample name 留空），不得取下一行原样当值——实测会抓到 'Containers Pooled 1 Container Volume 25.00 milliliter'。下一行只要以这些词开头就判定为『下行不是值』。"
+  },
+
+  "datetime": {
+    "input_formats": ["%m/%d/%Y %I:%M:%S%p", "%m/%d/%y %I:%M:%S%p"],
+    "sort_field": "series_dt",
+    "sort_note": "检测结果排序字段。series_dt = 报告段头部的 Series Date & Time（真实检测开始时间）；calibrated = 仪器校准时间（同一后台校准周期内长期不变，不可用于排序）。"
+  },
+
+  "channels": {
+    "wanted": [2.0, 10.0, 25.0],
+    "value_column_index": 2,
+    "value_column_meaning": "Series Averages 的第 2 列 = Average Cumulative Counts（第 3 列是 Average Differential Counts，不取）",
+    "missing_policy": "blank",
+    "labels": ["≥2μm", "≥10μm", "≥25μm"],
+    "note": "同一份报告的通道行数不固定，实际见过 2/5/10/25、2/5/10/15/25、2/5/7.5/8/10/12 等组合。只统计 2/10/25，其余忽略。"
+  },
+
+  "project": {
+    "number_pattern": "^(QL|PSB|PSSB)",
+    "number_pattern_flags": "I",
+    "prefer_prefixed": true,
+    "tie_break": "most_frequent_then_first_seen",
+    "case_insensitive": true,
+    "case_insensitive_note": "项目号按大小写不敏感归并并统一成大写。实测 'ql1101' 与 'QL1101' 会同时出现在一个文件里；不归并会拆成两个 sheet，而 openpyxl 对大小写同名的 sheet 会静默追加序号（QL1101 -> ql11011 -> ql11012），使 sheet 名每次运行都漂移、增量去重失效。",
+    "note": "同一文件按同一项目处理。若文件内出现多个项目号，优先取以 QL/PSB/PSSB 开头的；若仍多个，取出现次数最多的；次数相同取最先出现的。"
+  },
+
+  "exclusions": {
+    "_action_note": "action=exclude 的记录不进项目 sheet，写入「待复核」；action=warn 的记录照常入库，同时登记到「提示」sheet 备查。",
+
+    "project_not_a_number": {
+      "enabled": true,
+      "action": "exclude",
+      "reason": "项目名不是标准项目号"
+    },
+    "water_sample": {
+      "enabled": true,
+      "action": "exclude",
+      "pattern": "(?i)^\\s*(water|dd\\s*h2o|ddwater|h2o|h20|wfi|purified\\s*water|注射用水|纯化水|灭菌注射用水|kongpingshui[0-9-]*)\\s*$",
+      "reason": "样品名为水（使用前校验），非产品样品"
+    },
+    "blank_sample": {
+      "enabled": true,
+      "action": "exclude",
+      "pattern": "(?i)^\\s*blank(\\s+(of\\s+)?sample\\s*\\d*|\\s*\\d*#)?\\s*$",
+      "reason": "样品名为空白/背景（Blank），非产品样品"
+    },
+    "empty_sample": {
+      "enabled": true,
+      "action": "exclude",
+      "reason": "样品名为空（PDF 中该字段未填）"
+    },
+    "project_conflict": {
+      "enabled": true,
+      "action": "warn",
+      "reason": "文件内含多个不同项目号",
+      "warn_note": "这是 project 规则（取 QL/PSB 开头或出现最多者）预期内的正常处理场景，不宜直接丢弃数据，因此只提示。"
+    },
+    "project_typo": {
+      "enabled": true,
+      "action": "warn",
+      "max_edit_distance": 2,
+      "reason": "项目号与所在路径中的项目号仅差 1~2 个字符，疑似笔误",
+      "autocorrect": false,
+      "autocorrect_note": "**故意不自动纠正**。实测 15 组候选中多数其实是真实存在的不同项目（QL1209A/QL1209、QL1101A/QL1101、QLS31904/QLS31901 等），自动归并会串数据。这里只登记到「提示」sheet 供人工判定。"
+    },
+    "folder_mismatch": {
+      "enabled": true,
+      "action": "warn",
+      "reason": "所属文件夹名与文件内判定出的项目号不一致",
+      "match": "any_path_segment",
+      "match_note": "路径任一层目录名等于项目号即视为一致。只看顶层会误伤 MST\\QL1209\\x.pdf——顶层 MST 是分类目录，层级语义在 QL1209。"
+    }
+  },
+
+  "excel": {
+    "columns": ["检测时间", "样品名", "≥2μm", "≥10μm", "≥25μm", "≥2μm修约", "≥10μm修约", "≥25μm修约", "来源文件"],
+    "review_columns": ["排除原因", "检测时间", "样品名", "项目名", "所属文件夹", "≥2μm", "≥10μm", "≥25μm", "来源文件"],
+    "default_sheet": "未归类",
+    "review_sheet": "待复核",
+    "hint_sheet": "提示",
+    "hint_columns": ["提示原因", "检测时间", "样品名", "项目名", "来源文件"],
+    "rounding": {
+      "mode": "value",
+      "mode_options": ["value", "formula"],
+      "decimals": 0,
+      "note": "mode=value 直接写入向上取整后的数值；mode=formula 写入 =ROUNDUP(单元格,0) 公式。"
+    },
+    "freeze_header": true,
+    "auto_filter": true
+  },
+
+  "dedupe": {
+    "key_fields": ["来源文件", "样品名", "检测时间"],
+    "note": "增量入库的去重键。同一文件、同一样品名、同一检测时间视为同一条，重复运行不会追加。"
+  }
+}
