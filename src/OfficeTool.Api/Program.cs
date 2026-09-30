@@ -339,12 +339,17 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-// 未知的 /api/* 必须返回 JSON 404，不能被 SPA 回退吞成 HTML
+// 未知的 /api/* 必须返回 JSON 404，不能被 SPA 回退吞成 HTML。
+// 同样要 AllowAnonymous：否则未登录时拿到的是 401 而不是 404，
+// 前端无法区分「接口不存在」和「没登录」，排查起来很费劲。
 app.MapFallback("/api/{**path}", () =>
-    Results.Json(new OfficeTool.Api.Contracts.ApiError("not_found", "接口不存在。"), statusCode: 404));
+    Results.Json(new OfficeTool.Api.Contracts.ApiError("not_found", "接口不存在。"), statusCode: 404))
+   .AllowAnonymous();
 
-// SPA 回退：非 /api 的非文件请求交回 index.html
-app.MapFallbackToFile("index.html");
+// SPA 回退：非 /api 的非文件请求交回 index.html。
+// 必须显式 AllowAnonymous：MapFallbackToFile 注册的是**端点**，会落进全局 FallbackPolicy，
+// 不加就是 401 —— 未登录时连登录页都打不开（上面那段注释想避免的正是这个坑）。
+app.MapFallbackToFile("index.html").AllowAnonymous();
 
 app.Logger.LogInformation(
     "OfficeTool 启动完成。存储模式={Mode}，存储类型={StoreType}\n" +
