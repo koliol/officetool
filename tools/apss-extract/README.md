@@ -31,12 +31,18 @@ python apss_extract.py --pdf-dir X:\pdfs --xlsx X:\out\汇总.xlsx
 # 其他参数
 python apss_extract.py --dry-run        # 只出分析报告，不写 Excel
 python apss_extract.py --rebuild        # 忽略缓存，全部重新解析
+python apss_extract.py --fresh          # 不读旧 Excel，从空表全量重写（见下方警告）
 python apss_extract.py --limit 60       # 只处理前 N 个 PDF（调试）
 python apss_extract.py --workers 4      # 调并发数（默认 8）
 python apss_extract.py --force          # 跳过空值率异常检查（不建议）
 ```
 
 依赖：`pip install pdfplumber openpyxl`
+
+> ⚠️ **改了 `project.*`（含 `aliases`）导致项目号改名/合并时，必须加 `--fresh`**。
+> 增量是按 sheet 名去重的：旧 sheet 不会被清理，改名后同一批记录会被当成
+> "新 sheet 里没有"再写一遍，结果是旧 sheet 残留 + 新 sheet 重复。
+> 日常追加新 PDF 用默认（增量）即可，改规则后走 `--rebuild --fresh`（或直接 `--fresh`，缓存已含新规则时很快）。
 
 ### 3. 看结果
 
@@ -69,6 +75,9 @@ python apss_extract.py --force          # 跳过空值率异常检查（不建�
 | 换列标题 | `channels.labels` / `excel.columns` |
 | 修约写数值还是公式 | `excel.rounding.mode` |
 | 改项目号前缀 | `project.number_pattern`（默认 `^(QL\|PSB\|PSSB)`，大小写不敏感） |
+| **同一项目的不同写法 → 正确写法** | `project.aliases`（如 `QLLF32101` → `QLF32101`），命中即在裁定阶段替换、并入同一个 sheet |
+| 确认某两个号**不是**同一项目 | `exclusions.project_typo.confirmed_distinct`（二维列表，顺序无关） |
+| 字母后缀是否算笔误 | `exclusions.project_typo.suffix_not_typo.enabled`（默认 true = 不算笔误） |
 | 水样要不要入库 | `exclusions.water_sample.action`：`exclude` → 待复核；`warn` → 照常入库 |
 | Blank / 空样品名同理 | `exclusions.blank_sample` / `empty_sample` |
 | 文件夹不一致是否排除 | `exclusions.folder_mismatch.action` |
@@ -91,6 +100,17 @@ python apss_extract.py --force          # 跳过空值率异常检查（不建�
 
 > **为什么不自动纠正笔误**：候选中多数其实是真实存在的不同项目
 > （QLS31904 / QLS31901、QL1205 / QL0605……），自动归并会串数据。
+
+### 项目号归一化的三档处理（2026-09-30 业务确认）
+
+| 情形 | 处理 | 配置位置 |
+|---|---|---|
+| 同一项目、写法不同（`QLLF32101`/`QL32101`/`PSSB113`/`QL125D`） | **纠正**到正确写法 `QLF32101`/`QLF32101`/`PSB113`/`QL1205D`，数据并入同一 sheet，并在「提示」里留痕「原写法 → 正确写法」 | `project.aliases` |
+| 确认**不是**同一项目（`QL1205` vs `QL0605`、`QLS31903` vs `QLS31904`） | 不纠正、不提示 | `project_typo.confirmed_distinct` |
+| 只差字母后缀（`QL1209A` vs `QL1209`） | 不纠正、不提示（有意的子项目编号） | `project_typo.suffix_not_typo` |
+
+> 三档都**不影响**「文件内含多个项目号」「文件夹不一致」等其它提示；
+> 别名纠正后，路径里的目录名也按同一份别名比对，所以不会再误报「文件夹不一致」。
 
 > **字母后缀不算笔误**（`exclusions.project_typo.suffix_not_typo`）：
 > 项目号只比路径中项目号多/少一个字母后缀时（`QL1209A` vs `QL1209`、`QL1101A` vs `QL1101`），
@@ -134,31 +154,38 @@ python apss_extract.py --force          # 跳过空值率异常检查（不建�
 
 ---
 
-## 六、本次跑批结果（2026-09-30 重建，规则同日修正后）
+## 六、本次跑批结果（2026-09-30，`--fresh` 全量重写后）
 
 | 项 | 值 |
 |---|---|
 | PDF 文件 | 1864（其中 10 个 0 字节/解析失败） |
 | 报告段（Series Averages 块） | 8655 |
-| 正常入库 | 6634 条，分 90 个项目 sheet |
+| 正常入库 | 6634 条，分 **87** 个项目 sheet |
 | 待复核（已排除） | 2020 条 |
-| 提示（已入库但异常） | 1041 条 |
-| 全量解析耗时 | 约 190 秒（8 并发）；命中缓存后约 5 秒 |
+| 提示（已入库但异常） | 1020 条 |
+| 全量解析耗时 | 约 190 秒（8 并发）；命中缓存后约 10 秒 |
 
 独立校验（不复用解析代码，直接回读 PDF 原文比对）5 项全部通过：
 检测时间升序 / 修约=向上取整（19830 个数值）/ 随机抽样 40 条与原文一致 /
 人工锚点 4 条 / 每条报告段在 Excel 中恰好出现一次（双向差集为 0）。
 
-### 剩余的疑似笔误（2026-09-30 修正后，共 32 条，均为数字/字母型差异，未自动纠正）
+### 项目号归一化的结果（业务确认后）
+
+| 处理 | 组合 | 结果 |
+|---|---|---|
+| 纠正 | `QLLF32101`、`QL32101` → `QLF32101` | 合并进 QLF32101，sheet 消失 |
+| 纠正 | `PSSB113` → `PSB113` | 合并进 PSB113 |
+| 纠正 | `QL125D` → `QL1205D` | 合并进 QL1205D |
+| 不处理 | `QL1205` / `QL0605` | 两个独立 sheet，不再提示 |
+| 不处理 | `QLS31903` / `QLS31904` | 两个独立 sheet，不再提示 |
+| 不处理 | `QL1209A` / `QL1209`（字母后缀） | 两个独立 sheet，不再提示 |
+
+纠正过的记录在「提示」sheet 留有「原写法 → 正确写法」的痕迹，可追溯。
+
+### 当前剩余的疑似笔误（5 条，未自动纠正，等人工判定）
 
 | 文件内项目号 | 路径中的项目号 | 条数 |
 |---|---|---|
-| QLLF32101 | QLF32101 | 12 |
-| PSB113 | PSSB113 | 6 |
-| QL1205 | QL0605 | 5 |
-| QLS31903 | QLS31904 | 4 |
-| QL32101 | QLF32101 | 3 |
-| QL125D | QL1205D | 2 |
-
-字母后缀型（QL1209A/QL1209、QL1101A/QL1101、QL1205/QL1205D 等）已按业务确认为
-**不同项目**，不再列入笔误。`QL1209` 与 `QL1209A` 在 Excel 里本来就是两个独立 sheet。
+| QLF2004 | QLF32004 | 2 |
+| QLS2319 | QLS2312 | 2 |
+| QLS31904 | QLS31901 | 1 |

@@ -151,6 +151,8 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--rebuild", action="store_true")
+    ap.add_argument("--fresh", action="store_true",
+                    help="不读旧 Excel，从空表全量重写（改了项目号/别名规则、sheet 划分会变时必须用）")
     ap.add_argument("--limit", type=int, default=0, help="只处理前 N 个 PDF（调试用）")
     ap.add_argument("--force", action="store_true", help="跳过空值率异常检查（不建议）")
     a = ap.parse_args()
@@ -300,8 +302,16 @@ def main() -> int:
         return 0
 
     # ---- 读已有 Excel，构造去重键
+    # 注意：增量是按 sheet 名去重的。一旦规则变化导致项目号改名/合并（例如加了别名），
+    # 旧 sheet 名在 Excel 里仍然存在且不会被清理，同名记录会被当成"新 sheet 里没有"
+    # 再写一遍 -> 旧 sheet 残留 + 新 sheet 重复。这类情况必须加 --fresh 从空表重写。
     existing_keys = defaultdict(set)
-    if xlsx.is_file():
+    if a.fresh:
+        say("")
+        say("=== --fresh：忽略旧 Excel，从空表全量重写 ===")
+        wb = Workbook()
+        wb.remove(wb.active)
+    elif xlsx.is_file():
         wb = load_workbook(xlsx)
         for ws in wb.worksheets:
             if ws.max_row < 2:

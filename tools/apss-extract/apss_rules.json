@@ -41,7 +41,21 @@
     "tie_break": "most_frequent_then_first_seen",
     "case_insensitive": true,
     "case_insensitive_note": "项目号按大小写不敏感归并并统一成大写。实测 'ql1101' 与 'QL1101' 会同时出现在一个文件里；不归并会拆成两个 sheet，而 openpyxl 对大小写同名的 sheet 会静默追加序号（QL1101 -> ql11011 -> ql11012），使 sheet 名每次运行都漂移、增量去重失效。",
-    "note": "同一文件按同一项目处理。若文件内出现多个项目号，优先取以 QL/PSB/PSSB 开头的；若仍多个，取出现次数最多的；次数相同取最先出现的。"
+    "note": "同一文件按同一项目处理。若文件内出现多个项目号，优先取以 QL/PSB/PSSB 开头的；若仍多个，取出现次数最多的；次数相同取最先出现的。",
+
+    "aliases": {
+      "QLLF32101": "QLF32101",
+      "PSSB113": "PSB113",
+      "QL32101": "QLF32101",
+      "QL125D": "QL1205D"
+    },
+    "aliases_note": "人工确认的『同一项目的不同写法 → 正确写法』映射（2026-09-30 业务确认）。键与值都按**大写**匹配，命中即在裁定项目号阶段就替换，数据直接并入正确项目的 sheet，不会再拆出多余 sheet。要增删只改这里，不用动代码。",
+    "alias_applied": {
+      "enabled": true,
+      "action": "warn",
+      "reason": "项目号已按人工确认的映射纠正",
+      "note": "纠正过的记录照常入库，同时在「提示」sheet 登记原始写法，便于追溯核对。"
+    }
   },
 
   "exclusions": {
@@ -86,7 +100,12 @@
         "enabled": true,
         "pattern": "^[A-Z]{1,3}[0-9]?$",
         "note": "两个项目号只差一个字母后缀（QL1209A vs QL1209、QL1101A vs QL1101）时**不算笔误**——这是有意的子项目编号，A 与不带 A 是两个真实存在的不同项目，归并会串数据。命中即跳过笔误提示。"
-      }
+      },
+      "confirmed_distinct": [
+        ["QL1205", "QL0605"],
+        ["QLS31903", "QLS31904"]
+      ],
+      "confirmed_distinct_note": "人工确认**不是**同一项目的组合（2026-09-30 业务确认），即使编辑距离为 1~2 也不再提示为笔误。顺序无关，大小写不敏感。"
     },
     "folder_mismatch": {
       "enabled": true,

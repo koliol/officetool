@@ -112,6 +112,18 @@ def _dedupe_consecutive(values):
     return out
 
 
+def canonical_project(v, rules: dict) -> str:
+    """按 project.aliases 把「同一项目的不同写法」换成正确写法。
+
+    映射由业务确认（如 QLLF32101 → QLF32101）。键与值都按大写匹配，
+    所以 'qllf32101' / 'QLLF32101' 都会命中。未命中则原样（大写）返回。
+    """
+    v = (v or "").strip().upper()
+    if not v:
+        return v
+    return (rules.get("project", {}).get("aliases") or {}).get(v, v)
+
+
 def determine_project(raw_values, rules: dict) -> tuple[str, list, bool]:
     """按规则裁定文件归属的项目号。返回的大写形式为规范写法。
 
@@ -127,7 +139,7 @@ def determine_project(raw_values, rules: dict) -> tuple[str, list, bool]:
     # 不折叠会把一个项目的记录拆成两个 sheet，且 openpyxl 会对大小写同名的
     # sheet 静默追加序号（QL1101 -> ql11011 -> ql11012），导致每次运行 sheet 名漂移、
     # 增量去重失效。统一成大写作为规范形式。
-    collapsed = _dedupe_consecutive([v.upper() for v in vals])
+    collapsed = _dedupe_consecutive([canonical_project(v, rules) for v in vals])
     distinct = list(dict.fromkeys(collapsed))
 
     pattern = re.compile(pc["number_pattern"],
@@ -352,6 +364,17 @@ def _is_suffix_variant(a: str, b: str, tp: dict) -> bool:
     return False
 
 
+def _is_confirmed_distinct(a: str, b: str, tp: dict) -> bool:
+    """a/b 是否属于「业务已确认不是同一个项目」的组合。顺序无关、大小写不敏感。"""
+    for pair in tp.get("confirmed_distinct", []):
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            continue
+        x, y = str(pair[0]).strip().upper(), str(pair[1]).strip().upper()
+        if {a.upper(), b.upper()} == {x, y}:
+            return True
+    return False
+
+
 def classify(rec: dict, fileinfo: dict, rules: dict) -> tuple[list[str], list[str]]:
     """判断一条 record 的归类处理。
 
@@ -380,10 +403,21 @@ def classify(rec: dict, fileinfo: dict, rules: dict) -> tuple[list[str], list[st
         rs = EX["empty_sample"]
         (exc if rs.get("action") == "exclude" else warn).append(rs["reason"])
 
+    # 项目号别名纠正：原始写法与规范写法不同 -> 照常入库，登记到提示备查
+    ap = rules.get("project", {}).get("alias_applied", {})
+    if ap.get("enabled"):
+        raw = (rec.get("raw_project") or "").strip()
+        cp = canonical_project(raw, rules)
+        if raw and cp != raw.upper():
+            (exc if ap.get("action") == "exclude" else warn).append(
+                "%s：%s → %s" % (ap["reason"], raw, cp))
+
     fm = EX.get("folder_mismatch", {})
     if fm.get("enabled") and rec.get("project"):
         segs = (rec.get("file") or "").split(os.sep)[:-1]   # 去掉文件名
-        hit = any(s.upper() == rec["project"].upper() for s in segs)
+        # 路径里的目录名也要过一遍别名，否则 QLF32101 放在 QLLF32101 目录下会误报
+        hit = any(canonical_project(s, rules) == canonical_project(rec["project"], rules)
+                  for s in segs)
         if segs and not hit:
             msg = "%s（路径：%s）" % (fm["reason"], "/".join(segs))
             (exc if fm.get("action") == "exclude" else warn).append(msg)
@@ -396,7 +430,7 @@ def classify(rec: dict, fileinfo: dict, rules: dict) -> tuple[list[str], list[st
                 maxd = int(tp.get("max_edit_distance", 2))
                 best, bd = None, 99
                 for s in segs:
-                    su = s.upper()
+                    su = canonical_project(s, rules)
                     if not pat.match(su):
                         continue
                     d = _levenshtein(rec["project"].upper(), su)
@@ -406,6 +440,8 @@ def classify(rec: dict, fileinfo: dict, rules: dict) -> tuple[list[str], list[st
                     a = rec["project"].upper()
                     if _is_suffix_variant(a, best, tp):
                         pass   # 只差字母后缀 = 有意的子项目编号（QL1209A vs QL1209），不报笔误
+                    elif _is_confirmed_distinct(a, best, tp):
+                        pass   # 业务已确认这两个是不同的项目（QL1205 vs QL0605），不报笔误
                     else:
                         (exc if tp.get("action") == "exclude" else warn).append(
                             "%s：%s vs 路径中的 %s（差 %d 个字符）"
