@@ -249,6 +249,11 @@ def main() -> int:
     for res in results:
         for rec in res["records"]:
             n_rec += 1
+            # 缓存里存的是**上次运行时**裁定出的项目号，改了 project.aliases 后它仍是旧写法。
+            # 这里再过一遍别名，保证增删别名只须 --fresh 重跑，不必 --rebuild 全量重解析。
+            # （raw_project 保持原样，供「提示」sheet 留痕用。）
+            if rec.get("project"):
+                rec["project"] = P.canonical_project(rec["project"], rules)
             exc_r, warn_r = P.classify(rec, res, rules)
             if exc_r:
                 review.append((exc_r, rec))
