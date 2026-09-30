@@ -332,6 +332,26 @@ def _levenshtein(a: str, b: str) -> int:
     return prev[-1]
 
 
+def _is_suffix_variant(a: str, b: str, tp: dict) -> bool:
+    """a/b 是否只差一个字母后缀 —— 有意的子项目编号，不是笔误。
+
+    实测 QL1209A 与 QL1209 是两个真实存在的不同项目（A 版是独立编号），
+    编辑距离 1 会被误判成笔误刷进「提示」sheet。这里按规则里的
+    suffix_not_typo.pattern 判定：长的那个 = 短的 + 一个字母后缀 -> 豁免。
+    """
+    cfg = tp.get("suffix_not_typo", {})
+    if not cfg.get("enabled", True):
+        return False
+    try:
+        pat = re.compile(cfg.get("pattern", "^[A-Z]{1,3}[0-9]?$"))
+    except re.error:
+        return False
+    for x, y in ((a, b), (b, a)):
+        if x.startswith(y) and pat.match(x[len(y):]):
+            return True
+    return False
+
+
 def classify(rec: dict, fileinfo: dict, rules: dict) -> tuple[list[str], list[str]]:
     """判断一条 record 的归类处理。
 
@@ -383,9 +403,13 @@ def classify(rec: dict, fileinfo: dict, rules: dict) -> tuple[list[str], list[st
                     if d < bd:
                         bd, best = d, su
                 if best is not None and 1 <= bd <= maxd:
-                    (exc if tp.get("action") == "exclude" else warn).append(
-                        "%s：%s vs 路径中的 %s（差 %d 个字符）"
-                        % (tp["reason"], rec["project"], best, bd))
+                    a = rec["project"].upper()
+                    if _is_suffix_variant(a, best, tp):
+                        pass   # 只差字母后缀 = 有意的子项目编号（QL1209A vs QL1209），不报笔误
+                    else:
+                        (exc if tp.get("action") == "exclude" else warn).append(
+                            "%s：%s vs 路径中的 %s（差 %d 个字符）"
+                            % (tp["reason"], rec["project"], best, bd))
 
     cf = EX.get("project_conflict", {})
     if cf.get("enabled") and fileinfo.get("conflict"):

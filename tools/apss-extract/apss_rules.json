@@ -81,7 +81,12 @@
       "max_edit_distance": 2,
       "reason": "项目号与所在路径中的项目号仅差 1~2 个字符，疑似笔误",
       "autocorrect": false,
-      "autocorrect_note": "**故意不自动纠正**。实测 15 组候选中多数其实是真实存在的不同项目（QL1209A/QL1209、QL1101A/QL1101、QLS31904/QLS31901 等），自动归并会串数据。这里只登记到「提示」sheet 供人工判定。"
+      "autocorrect_note": "**故意不自动纠正**。实测候选里多数其实是真实存在的不同项目（QLS31904/QLS31901 等），自动归并会串数据。这里只登记到「提示」sheet 供人工判定。",
+      "suffix_not_typo": {
+        "enabled": true,
+        "pattern": "^[A-Z]{1,3}[0-9]?$",
+        "note": "两个项目号只差一个字母后缀（QL1209A vs QL1209、QL1101A vs QL1101）时**不算笔误**——这是有意的子项目编号，A 与不带 A 是两个真实存在的不同项目，归并会串数据。命中即跳过笔误提示。"
+      }
     },
     "folder_mismatch": {
       "enabled": true,
