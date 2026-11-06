@@ -206,7 +206,14 @@ public sealed class AccessControlService(
         var key = CacheKey(userName);
         if (_cache.TryGetValue<UserAccess>(key, out var cached) && cached is not null)
         {
-            return cached;
+            // 缓存键做小写归一是为了「改授权后按任意大小写失效都能命中」，
+            // 但身份本身是大小写敏感的（SQLite 默认 BINARY）。若只按 key 返回，
+            // admin 与 Admin 两个账户会共用同一份 UserAccess —— 命中别人的超管权限。
+            // 因此命中后必须再核对一次真实登录名。
+            if (string.Equals(cached.UserName, userName, StringComparison.Ordinal))
+            {
+                return cached;
+            }
         }
 
         var user = await _db.Users

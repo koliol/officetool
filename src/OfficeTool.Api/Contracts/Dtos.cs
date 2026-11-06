@@ -148,7 +148,7 @@ public sealed record CopyResultDto(
 
 public sealed record OperationLogDto(
     int Id, string Action, string TargetPath, string? Ip, string? UserAgent,
-    string Result, string? Message, DateTime CreatedAt);
+    string Result, string? Message, string? UserName, DateTime CreatedAt);
 
 public sealed record SystemConfigDto(
     string Mode,

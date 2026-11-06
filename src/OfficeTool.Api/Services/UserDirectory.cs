@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using OfficeTool.Api.Data;
+using OfficeTool.Core.Exceptions;
 using OfficeTool.Core.Models;
 using OfficeTool.Core.Options;
 
@@ -15,10 +16,12 @@ namespace OfficeTool.Api.Services;
 public sealed class UserDirectoryService(
     AppDbContext db,
     AuthOptions options,
+    IAccessControlService access,
     ILogger<UserDirectoryService> logger)
 {
     private readonly AppDbContext _db = db;
     private readonly AuthOptions _options = options;
+    private readonly IAccessControlService _access = access;
     private readonly ILogger<UserDirectoryService> _logger = logger;
 
     /// <summary>
@@ -38,7 +41,25 @@ public sealed class UserDirectoryService(
     {
         var name = AccessControlService.NormalizeAccountName(userName);
 
-        var user = await _db.Users.FirstOrDefaultAsync(x => x.UserName == name, ct);
+        // 同名账户必须区分来源：本地账户与域账户共用一张表，如果只按名字查，
+        // 域内任何人只要 sAMAccountName 撞上本地账户（默认引导账户就叫 admin），
+        // 就能被签发该账户的会话 —— 等于不用密码接管超管。这里必须显式拒绝。
+        var user = await _db.Users.FirstOrDefaultAsync(
+            x => EF.Functions.Collate(x.UserName, "NOCASE") == name, ct);
+
+        if (user is not null && user.Source == UserSource.Local)
+        {
+            _logger.LogWarning(
+                "拒绝 SSO 登录：{UserName} 与本地账户同名，二者必须使用不同登录名。", name);
+            throw new AccessDeniedException($"登录名 {name} 已被本地账户占用，无法用域账户登录。");
+        }
+
+        if (user is not null && !user.IsEnabled)
+        {
+            _logger.LogWarning("拒绝 SSO 登录：{UserName} 已被停用。", name);
+            throw new AccessDeniedException("该账户已被停用，请联系管理员。");
+        }
+
         if (user is null)
         {
             user = new User
@@ -61,11 +82,24 @@ public sealed class UserDirectoryService(
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        var existing = await _db.UserGroups.Where(x => x.UserId == user.Id).ToListAsync(ct);
+        // 只覆盖**域组**关系。本地组是管理员手工维护的（例如「把这个人归拢到某个
+        // 本地组」），以域为准去删它们会把人工授权在下次登录时静默抹掉。
+        var existing = await (
+            from ug in _db.UserGroups
+            join g in _db.Groups on ug.GroupId equals g.Id
+            where ug.UserId == user.Id && g.Source == UserSource.Ad
+            select ug).ToListAsync(ct);
 
-        // 先删后插：保证「以域为准」，不残留已被移除的关系
-        if (existing.Count > 0)
+        // 拿不到域组（LDAP 未配 / 查询失败 / 域里确实没有组）时保持现状，
+        // 不能把它当成「域里一个组都没有」而清空，否则撤权与失权都无法区分。
+        if (identifiers.Count == 0)
         {
+            _logger.LogWarning(
+                "域用户 {UserName} 本次未返回任何组标识，跳过组关系覆盖（保持现有授权）。", name);
+        }
+        else if (existing.Count > 0)
+        {
+            // 先删后插：保证「以域为准」，不残留已被移除的关系
             _db.UserGroups.RemoveRange(existing);
         }
 
@@ -93,7 +127,9 @@ public sealed class UserDirectoryService(
         user.LastLoginAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
 
-        // 组关系变了，权限缓存必须失效，否则用户要等缓存过期才看到变化
+        // 组关系变了，权限缓存必须失效，否则用户要等缓存过期（默认 5 分钟）才看到变化。
+        // 注释写在这里却没有调用，等于撤权不生效 —— 这是权限系统里最危险的一类静默失效。
+        await _access.InvalidateAsync([user.UserName], ct);
         return user;
     }
 

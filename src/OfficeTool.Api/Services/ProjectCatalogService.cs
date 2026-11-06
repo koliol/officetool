@@ -26,6 +26,16 @@ public sealed class ProjectCatalogService(
     private Task<UserAccess> CurrentAccessAsync(CancellationToken ct) => _access.ResolveAccessAsync(_request, ct);
 
     /// <summary>
+    /// 按名称取项目，<b>大小写不敏感</b>。
+    ///
+    /// 项目名就是磁盘目录名，而 Windows / SMB 共享都不区分大小写：库里存成两个
+    /// 只差大小写的项目，它们会指向同一个物理目录，数据互相串。所以判重与查找
+    /// 都必须与文件系统保持一致，不能依赖 SQLite 默认的 BINARY 比较。
+    /// </summary>
+    private Task<Project?> FindProjectAsync(string name, CancellationToken ct) =>
+        _db.Projects.FirstOrDefaultAsync(p => EF.Functions.Collate(p.Name, "NOCASE") == name, ct);
+
+    /// <summary>
     /// 结构维护（建/删项目与检项）的权限门。
     ///
     /// 这里刻意不用「对某个检项有 Manage」：一个项目在创建时还没有任何检项，
@@ -71,8 +81,13 @@ public sealed class ProjectCatalogService(
             .ToListAsync(ct);
 
         // 可见性裁剪有两层含义：
-        //   1. 项目里没有任何可见检项时，这个项目不该出现在列表里
+        //   1. 项目里没有任何**可见**检项时，这个项目不该出现在列表里
         //   2. 检项计数也要按可见的算 —— 显示「8 个检项」点进去一个都看不到，比不显示更糟
+        //
+        // ⚠ 「没有可见检项」≠「没有检项」。后者（新建项目、或删掉最后一个检项的项目）
+        // 必须照常返回，否则新建完项目再刷新页面，项目就从列表里消失了 —— 界面上再也
+        // 选不中它，它的第一个检项永远建不出来（这是 2026-11 修复的 P0 缺陷）。
+        // 只有需要按检项裁剪的用户才排除空项目，超管/关闭鉴权时必须看到全部项目。
         var visibleChecks = access.NeedsCheckFilter
             ? checks.Where(x => access.IsVisible(x.Id)).ToList()
             : checks;
@@ -81,9 +96,12 @@ public sealed class ProjectCatalogService(
             .GroupBy(x => x.ProjectId)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        return [.. projects
-            .Where(p => counts.ContainsKey(p.Id))
-            .Select(p => new ProjectDto(p.Id, p.Name, p.CreatedAt, counts[p.Id]))];
+        var visibleProjects = access.NeedsCheckFilter
+            ? projects.Where(p => counts.ContainsKey(p.Id))
+            : projects;
+
+        return [.. visibleProjects
+            .Select(p => new ProjectDto(p.Id, p.Name, p.CreatedAt, counts.TryGetValue(p.Id, out var n) ? n : 0))];
     }
 
     /// <summary>
@@ -104,6 +122,8 @@ public sealed class ProjectCatalogService(
 
         // 无可见检项的项目直接不出节点：留一个点不开的空节点，
         // 除了让人猜到「这里有个我进不去的项目」之外没有价值。
+        // 但「零检项」的项目必须保留（见 ListAsync 的说明）—— 否则新建/清空后的项目
+        // 会从树上消失，连它的第一个检项都建不出来。
         if (access.NeedsCheckFilter)
         {
             checks = [.. checks.Where(c => access.IsVisible(c.Id))];
@@ -111,10 +131,13 @@ public sealed class ProjectCatalogService(
 
         var byProject = checks.ToLookup(c => c.ProjectId);
 
+        var visibleProjects = access.NeedsCheckFilter
+            ? projects.Where(p => byProject[p.Id].Any())
+            : projects;
+
         return
         [
-            .. projects
-                .Where(p => byProject[p.Id].Any())
+            .. visibleProjects
                 .Select(p => new ProjectTreeNodeDto(
                     p.Id,
                     p.Name,
@@ -134,9 +157,10 @@ public sealed class ProjectCatalogService(
 
         var name = NameValidator.ValidateCode(request.Name, "项目编码");
 
-        if (await _db.Projects.AnyAsync(p => p.Name == name, ct))
+        // 大小写不敏感判重：QL1101 与 ql1101 在磁盘上是同一个目录
+        if (await FindProjectAsync(name, ct) is { } existing)
         {
-            throw new ConflictException($"项目已存在：{name}");
+            throw new ConflictException($"项目已存在：{existing.Name}");
         }
 
         // 同时在模板库、数据、附件、提取规则四处创建项目级目录（§4.2）
@@ -157,7 +181,7 @@ public sealed class ProjectCatalogService(
 
     public async Task DeleteAsync(string name, CancellationToken ct = default)
     {
-        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Name == name, ct)
+        var project = await FindProjectAsync(name, ct)
             ?? throw new NotFoundException($"项目不存在：{name}");
 
         await RequireProjectAdminAsync(project, "删除项目", ct);
@@ -201,7 +225,7 @@ public sealed class ProjectCatalogService(
     {
         var access = await CurrentAccessAsync(ct);
 
-        var project = await _db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Name == projectName, ct)
+        var project = await FindProjectAsync(projectName, ct)
             ?? throw new NotFoundException($"项目不存在：{projectName}");
 
         var checks = await _db.Checks.AsNoTracking()
@@ -220,14 +244,15 @@ public sealed class ProjectCatalogService(
 
     public async Task<CheckDto> CreateCheckAsync(string projectName, CreateCheckRequest request, CancellationToken ct = default)
     {
-        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Name == projectName, ct)
+        var project = await FindProjectAsync(projectName, ct)
             ?? throw new NotFoundException($"项目不存在：{projectName}");
 
         var name = NameValidator.ValidateCode(request.Name, "检项编码");
 
         await RequireProjectAdminAsync(project, "新建检项", ct);
 
-        if (await _db.Checks.AnyAsync(c => c.ProjectId == project.Id && c.Name == name, ct))
+        if (await _db.Checks.AnyAsync(
+                c => c.ProjectId == project.Id && EF.Functions.Collate(c.Name, "NOCASE") == name, ct))
         {
             throw new ConflictException($"检项已存在：{projectName}/{name}");
         }
@@ -250,10 +275,11 @@ public sealed class ProjectCatalogService(
 
     public async Task DeleteCheckAsync(string projectName, string checkName, CancellationToken ct = default)
     {
-        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Name == projectName, ct)
+        var project = await FindProjectAsync(projectName, ct)
             ?? throw new NotFoundException($"项目不存在：{projectName}");
 
-        var check = await _db.Checks.FirstOrDefaultAsync(c => c.ProjectId == project.Id && c.Name == checkName, ct)
+        var check = await _db.Checks.FirstOrDefaultAsync(
+                c => c.ProjectId == project.Id && EF.Functions.Collate(c.Name, "NOCASE") == checkName, ct)
             ?? throw new NotFoundException($"检项不存在：{projectName}/{checkName}");
 
         (await CurrentAccessAsync(ct)).Require(check.Id, AccessLevel.Manage, "删除检项", $"{projectName}/{checkName}");
@@ -313,10 +339,11 @@ public sealed class ProjectCatalogService(
     public async Task<(Project Project, CheckItem Check)> ResolveAsync(
         string projectName, string checkName, CancellationToken ct = default)
     {
-        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Name == projectName, ct)
+        var project = await FindProjectAsync(projectName, ct)
             ?? throw new NotFoundException($"项目不存在：{projectName}");
 
-        var check = await _db.Checks.FirstOrDefaultAsync(c => c.ProjectId == project.Id && c.Name == checkName, ct)
+        var check = await _db.Checks.FirstOrDefaultAsync(
+                c => c.ProjectId == project.Id && EF.Functions.Collate(c.Name, "NOCASE") == checkName, ct)
             ?? throw new NotFoundException($"检项不存在：{projectName}/{checkName}");
 
         return (project, check);

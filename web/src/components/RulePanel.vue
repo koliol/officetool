@@ -281,15 +281,13 @@ watch(
   () => load(),
 )
 
-watch(
-  () => props.scopeText,
-  () => undefined,
-)
-
 onMounted(() => {
   filters.project = store.currentProject || ''
   filters.check = store.currentCheck || ''
   loadCheckOptions()
+  // 首次进入时 watch 不会触发（值没有「变化」），必须主动拉一次，
+  // 否则表格永远是空的，用户得手动点刷新才看得到规则。
+  load()
 })
 
 defineOptions({ name: 'RulePanel' })

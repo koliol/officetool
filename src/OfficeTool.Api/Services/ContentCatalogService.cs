@@ -692,7 +692,7 @@ public sealed class ContentCatalogService(
 
     // ── 元数据同步（§6.2 文件系统为准） ─────────────────────────────────
 
-    public async Task<SyncResult> SyncMetadataAsync(CancellationToken ct = default)
+    public async Task<SyncResult> SyncMetadataAsync(bool force = false, CancellationToken ct = default)
     {
         // 限定系统管理员。同步要扫描整个存储根，返回的 messages 里会带上
         // 所有项目的路径名 —— 给普通放行等于开放一次全量清单枚举。
@@ -731,6 +731,7 @@ public sealed class ContentCatalogService(
                     CreatedAt = DateTime.Now,
                 };
             },
+            force: force,
             ct: ct);
 
         var documentsAdded = await SyncOneAsync(
@@ -760,6 +761,7 @@ public sealed class ContentCatalogService(
                     CreatedAt = DateTime.Now,
                 };
             },
+            force: force,
             ct: ct);
 
         await _logs.WriteAsync("同步元数据", $"{_layout.TemplatesRoot} / {_layout.DataRoot}", success: true, ct: ct);
@@ -777,11 +779,22 @@ public sealed class ContentCatalogService(
         List<TEntity> dbEntries,
         Func<TEntity, string> dbRelative,
         Func<string, FileMeta, TEntity?> addFromDisk,
+        bool force,
         CancellationToken ct)
         where TEntity : class
     {
         var diskSet = new HashSet<string>(diskEntries.Select(e => e.Relative), StringComparer.OrdinalIgnoreCase);
         var dbSet = new HashSet<string>(dbEntries.Select(dbRelative), StringComparer.OrdinalIgnoreCase);
+
+        // 存储根扫不到任何文件，但库里有记录 —— 九成是共享目录没挂上 / 根路径配错，
+        // 而不是「文件真被删光了」。此时按差集删库会瞬间清空整个索引（不可逆：
+        // 重建记录会丢失 CreatedAt 与模板谱系），所以默认拒绝，必须显式 force。
+        if (diskEntries.Count == 0 && dbEntries.Count > 0 && !force)
+        {
+            throw new ConflictException(
+                $"扫描 {label} 根目录得到 0 个文件，但数据库里有 {dbEntries.Count} 条记录。" +
+                "这通常意味着共享目录未挂载或根路径配置错误。确认文件确实已全部删除时，请带 force=true 重试。");
+        }
 
         var added = 0;
         foreach (var (relative, meta) in diskEntries)

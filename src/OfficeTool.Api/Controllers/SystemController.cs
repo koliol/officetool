@@ -19,6 +19,7 @@ public sealed class SystemController(
     DesktopPluginOptions plugin,
     IFileStore store,
     ContentCatalogService content,
+    OperationLogService logs,
     CredentialProtector protector) : ControllerBase
 {
     private readonly AppDbContext _db = db;
@@ -27,6 +28,7 @@ public sealed class SystemController(
     private readonly DesktopPluginOptions _plugin = plugin;
     private readonly IFileStore _store = store;
     private readonly ContentCatalogService _content = content;
+    private readonly OperationLogService _logs = logs;
     private readonly CredentialProtector _protector = protector;
 
     /// <summary>
@@ -70,11 +72,16 @@ public sealed class SystemController(
         ExtractionAvailable: AttachmentsController.ExtractionAvailable));
 
     /// <summary>扫描 SMB 目录修正数据库索引（设计文档 §6.2）。</summary>
+    /// <param name="force">
+    /// 存储根扫不到任何文件时，默认拒绝同步（防止共享目录未挂载时把整个索引删光）。
+    /// 确认文件确实已全部删除时传 true。
+    /// </param>
     [HttpPost("system/sync")]
-    public Task<SyncResult> Sync(CancellationToken ct) => _content.SyncMetadataAsync(ct);
+    public Task<SyncResult> Sync([FromQuery] bool force, CancellationToken ct) =>
+        _content.SyncMetadataAsync(force, ct);
 
     [HttpGet("logs")]
-    public async Task<ActionResult<PagedResult<OperationLogDto>>> Logs(
+    public Task<PagedResult<OperationLogDto>> Logs(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
@@ -82,16 +89,8 @@ public sealed class SystemController(
         page = page < 1 ? 1 : page;
         pageSize = pageSize is < 1 or > 500 ? 50 : pageSize;
 
-        var total = await _db.OperationLogs.CountAsync(ct);
-        var items = await _db.OperationLogs.AsNoTracking()
-            .OrderByDescending(l => l.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(l => new OperationLogDto(
-                l.Id, l.Action, l.TargetPath, l.Ip, l.UserAgent, l.Result, l.Message, l.CreatedAt))
-            .ToListAsync(ct);
-
-        return Ok(new PagedResult<OperationLogDto>(items, total, page, pageSize));
+        // 权限判定在服务层（含「回查数据库的系统管理员」判定）
+        return _logs.ListAsync(page, pageSize, ct);
     }
 
     /// <summary>

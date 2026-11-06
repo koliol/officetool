@@ -68,8 +68,8 @@ public class AdminServiceTests
 
             Options = new AuthOptions { Enabled = authEnabled };
             Cache = new MemoryCache(new MemoryCacheOptions());
-            var logs = new OperationLogService(Db, ContextFor(asUser), Logger<OperationLogService>());
             Access = new AccessControlService(Db, Cache, Options, Logger<AccessControlService>());
+            var logs = new OperationLogService(Db, ContextFor(asUser), Access, Logger<OperationLogService>());
             Admin = new AdminService(Db, Options, ContextFor(asUser), Access, logs, Logger<AdminService>());
         }
 

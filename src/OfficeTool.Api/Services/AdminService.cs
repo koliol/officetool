@@ -111,7 +111,9 @@ public sealed class AdminService(
         var userName = ValidateUserName(dto.UserName);
         var displayName = string.IsNullOrWhiteSpace(dto.DisplayName) ? userName : dto.DisplayName.Trim();
 
-        if (await _db.Users.AnyAsync(x => x.UserName == userName, ct))
+        // 大小写不敏感判重：登录名参与 ACL 归因，admin 与 Admin 同时存在
+        // 既会让人认错人，也会让权限缓存与审计日志产生歧义。
+        if (await _db.Users.AnyAsync(x => EF.Functions.Collate(x.UserName, "NOCASE") == userName, ct))
         {
             throw new ConflictException($"登录名已存在：{userName}");
         }
@@ -997,7 +999,14 @@ public sealed class AdminService(
         return parsed;
     }
 
-    /// <summary>登录名校验。允许字母数字与 <c>. _ - @</c>——域 UPN 形态也留了余量。</summary>
+    /// <summary>
+    /// 登录名校验。允许字母数字与 <c>. _ -</c>，<b>禁止 @</b>。
+    ///
+    /// 为什么不许 @：权限解析会把 <c>user@DOMAIN</c> 截断成 <c>user</c>（这是 SSO 的
+    /// 归一化规则）。本地账户若叫 <c>admin@x</c>，请求期会被当成 <c>admin</c>，
+    /// 于是「有授权却看不到东西」，甚至借令牌接口拿到超管身份。
+    /// 域 UPN 只在 SSO 入口归一化一次，不应该让本地账户也走这条路。
+    /// </summary>
     private static string ValidateUserName(string raw)
     {
         var value = (raw ?? string.Empty).Trim();
@@ -1007,10 +1016,10 @@ public sealed class AdminService(
             throw new BadRequestException("登录名不能为空，且长度不得超过 128 个字符。");
         }
 
-        if (!value.All(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-' or '@'))
+        if (!value.All(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-'))
         {
             throw new BadRequestException(
-                "登录名只能包含字母、数字与 . _ - @ 四种符号。");
+                "登录名只能包含字母、数字与 . _ - 三种符号（不允许 @，域账户请直接用 SSO 登录）。");
         }
 
         return value;
