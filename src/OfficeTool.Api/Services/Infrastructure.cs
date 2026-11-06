@@ -3,10 +3,18 @@ using OfficeTool.Core.Options;
 
 namespace OfficeTool.Api.Services;
 
-/// <summary>请求上下文（客户端 IP / UserAgent），用于操作日志字段（§6.1）。</summary>
-public sealed class RequestContext(IHttpContextAccessor accessor)
+/// <summary>
+/// 请求上下文（客户端 IP / UserAgent），用于操作日志字段（§6.1）。
+///
+/// IP 的取值规则（曾有审计日志被任意请求头污染的事故，规则收紧）：
+/// 只有当请求直连地址在 <c>Security:TrustedProxies</c> 里时，
+/// 才采信 <c>X-Forwarded-For</c>；否则一律用直连地址。
+/// 内网直连部署不用配任何东西，行为与从前不同的一点是：伪造 XFF 不再生效。
+/// </summary>
+public sealed class RequestContext(IHttpContextAccessor accessor, SecurityOptions security)
 {
     private readonly IHttpContextAccessor _accessor = accessor;
+    private readonly SecurityOptions _security = security;
 
     public string? Ip
     {
@@ -18,8 +26,10 @@ public sealed class RequestContext(IHttpContextAccessor accessor)
                 return null;
             }
 
-            // 反向代理场景优先取 X-Forwarded-For 的第一跳
-            if (context.Request.Headers.TryGetValue("X-Forwarded-For", out var forwarded))
+            var remote = context.Connection.RemoteIpAddress?.ToString();
+
+            if (context.Request.Headers.TryGetValue("X-Forwarded-For", out var forwarded) &&
+                IsTrustedProxy(remote))
             {
                 var first = forwarded.ToString().Split(',', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
                 if (!string.IsNullOrWhiteSpace(first))
@@ -28,8 +38,18 @@ public sealed class RequestContext(IHttpContextAccessor accessor)
                 }
             }
 
-            return context.Connection.RemoteIpAddress?.ToString();
+            return remote;
         }
+    }
+
+    private bool IsTrustedProxy(string? remoteIp)
+    {
+        if (string.IsNullOrWhiteSpace(remoteIp) || _security.TrustedProxies.Length == 0)
+        {
+            return false;
+        }
+
+        return _security.TrustedProxies.Contains(remoteIp, StringComparer.OrdinalIgnoreCase);
     }
 
     public string? UserAgent => _accessor.HttpContext?.Request.Headers.UserAgent.ToString();

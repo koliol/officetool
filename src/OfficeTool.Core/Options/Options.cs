@@ -328,3 +328,26 @@ public sealed class AuthOptions
 //
 // ⚠️ 规则文件只存储、不执行。真正的执行要等提取脚本实现，
 // 接入点是 AttachmentService.ExtractAsync。
+
+/// <summary>
+/// 安全相关开关（内网默认全关，暴露在反向代理 / HTTPS 后面时才需要动）。
+/// </summary>
+public sealed class SecurityOptions
+{
+    public const string SectionName = "Security";
+
+    /// <summary>
+    /// 可信反向代理的 IP 列表。
+    ///
+    /// 只有当请求的直连地址在这个列表里时，才采信 <c>X-Forwarded-For</c> 作为审计 IP。
+    /// 默认为空 = 永远不信 XFF —— 否则内网工具一旦直接暴露端口，
+    /// 任何人都能用一个请求头把审计日志的 IP 写成任意值。
+    /// </summary>
+    public string[] TrustedProxies { get; set; } = [];
+
+    /// <summary>
+    /// 强制认证 Cookie 带 Secure 标记。HTTPS 部署（反向代理终结 TLS）时设 true；
+    /// 纯 HTTP 的内网部署保持 false，否则浏览器根本不会回传 Cookie，登录直接失效。
+    /// </summary>
+    public bool ForceSecureCookie { get; set; }
+}

@@ -20,11 +20,15 @@ public static class UncConnection
 
     private static readonly object Gate = new();
 
-    /// <summary>已成功建立连接的共享根集合，避免每次都调用 Win32。</summary>
-    private static readonly HashSet<string> Connected = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>已建立连接的共享根 → 建立时间。到期后重新探测，**只增不减**的旧实现在这里踩过坑：
+    /// 共享服务器重启/网络闪断后，缓存里仍是"已连接"，之后所有 IO 一直失败到进程重启。</summary>
+    private static readonly Dictionary<string, DateTime> Connected = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>超过这个时长后，下一次访问会先探测共享是否仍然可达。</summary>
+    private static readonly TimeSpan RevalidateAfter = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// 确保到 <paramref name="uncPath"/> 所在共享的连接已建立。
+    /// 确保到 <paramref name="uncPath"/> 所在共享的连接可用。
     /// </summary>
     /// <param name="uncPath">UNC 路径，如 \\server\share\OfficeDocs\Data</param>
     public static void EnsureConnected(string uncPath, string? userName, string? password, string? domain)
@@ -39,15 +43,33 @@ public static class UncConnection
 
         lock (Gate)
         {
-            if (Connected.Contains(shareRoot))
+            var known = Connected.TryGetValue(shareRoot, out var connectedAt);
+
+            if (known && DateTime.UtcNow - connectedAt < RevalidateAfter)
             {
+                return;
+            }
+
+            // 缓存过期：先探测共享是否仍然可达。探测成功就刷新时间戳，
+            // 不必每次都打 Win32（WNetAddConnection2 对已连接共享可能返回 1219）。
+            if (known && Directory.Exists(shareRoot))
+            {
+                Connected[shareRoot] = DateTime.UtcNow;
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(userName))
             {
                 // 未配置凭据：依赖进程身份（域账号或 ApplicationPoolIdentity）直连。
-                Connected.Add(shareRoot);
+                // 这里不能只记状态不做检查 —— 探测失败要立刻给出可读错误，
+                // 否则用户看到的是几分钟后某个 IO 操作里一句没头没尾的异常。
+                if (!Directory.Exists(shareRoot))
+                {
+                    throw new IOException(
+                        $"无法访问共享 {shareRoot}（进程身份直连）。请确认共享可达、当前账号有权限。");
+                }
+
+                Connected[shareRoot] = DateTime.UtcNow;
                 return;
             }
 
@@ -64,12 +86,24 @@ public static class UncConnection
             var result = WNetAddConnection2(ref resource, password, qualifiedUser, ConnectInteractive);
             if (result != 0)
             {
+                // 失败时清掉缓存条目：让下一次请求重新尝试，而不是继续信旧状态
+                Connected.Remove(shareRoot);
+
                 throw new IOException(
                     $"连接 SMB 共享失败：{shareRoot}，Win32 错误码 {result}（{DescribeError(result)}）。" +
                     "请检查专用账号、密码、共享路径与网络连通性。");
             }
 
-            Connected.Add(shareRoot);
+            Connected[shareRoot] = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>主动失效某个共享的连接状态。检测到 IO 异常时可调用，下一次访问会重新探测。</summary>
+    public static void Invalidate(string uncPath)
+    {
+        lock (Gate)
+        {
+            Connected.Remove(GetShareRoot(uncPath));
         }
     }
 

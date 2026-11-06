@@ -53,7 +53,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.ToTable("Projects");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Name).HasMaxLength(64).IsRequired();
-            entity.Property(x => x.CreatedByIp).HasMaxLength(64);
             entity.HasIndex(x => x.Name).IsUnique();
             entity.HasMany(x => x.Checks)
                 .WithOne(x => x.Project!)
@@ -66,7 +65,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.ToTable("Checks");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Name).HasMaxLength(64).IsRequired();
-            entity.Property(x => x.CreatedByIp).HasMaxLength(64);
             entity.HasIndex(x => new { x.ProjectId, x.Name }).IsUnique();
         });
 
@@ -77,7 +75,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(x => x.FileName).HasMaxLength(260).IsRequired();
             entity.Property(x => x.RelativePath).HasMaxLength(500).IsRequired();
             entity.Property(x => x.Extension).HasMaxLength(16);
-            entity.Property(x => x.UploadedByIp).HasMaxLength(64);
             entity.HasIndex(x => new { x.ProjectId, x.CheckId, x.FileName }).IsUnique();
 
             // 列表默认按修改时间倒序排。0001_InitialCreate 就在库里建了这个索引，
@@ -94,7 +91,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(x => x.RelativePath).HasMaxLength(500).IsRequired();
             entity.Property(x => x.SourceTemplatePath).HasMaxLength(500);
             entity.Property(x => x.Extension).HasMaxLength(16);
-            entity.Property(x => x.CreatedByIp).HasMaxLength(64);
             entity.HasIndex(x => new { x.ProjectId, x.CheckId, x.FileName }).IsUnique();
 
             // 同 Templates.ModifiedAt：0001 建了索引但模型未声明，此处补声明对齐。
@@ -120,7 +116,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(x => x.FileName).HasMaxLength(260).IsRequired();
             entity.Property(x => x.OriginalRelativePath).HasMaxLength(500).IsRequired();
             entity.Property(x => x.TrashRelativePath).HasMaxLength(500).IsRequired();
-            entity.Property(x => x.DeletedByIp).HasMaxLength(64);
             entity.HasIndex(x => x.DeletedAt);
             entity.HasIndex(x => new { x.Kind, x.Project, x.Check });
         });

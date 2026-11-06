@@ -19,6 +19,14 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Windows 原生部署：由服务控制管理器（SCM）直接拉起本进程时，以 Windows 服务身份运行。
+// 群晖/Docker 的 Linux 形态下这一句不生效（OperatingSystem.IsWindows 为 false），
+// 两种部署方式共用同一份代码（详见 docs/deployment-windows-native.md）。
+if (OperatingSystem.IsWindows())
+{
+    builder.Host.UseWindowsService();
+}
+
 // ── 日志（设计文档 §12：文件日志按天滚动） ─────────────────────────────
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
@@ -49,6 +57,10 @@ builder.Services.AddSingleton(storageOptions);
 builder.Services.AddSingleton(uploadOptions);
 builder.Services.AddSingleton(pluginOptions);
 builder.Services.AddSingleton(authOptions);
+
+var securityOptions = new SecurityOptions();
+builder.Configuration.GetSection(SecurityOptions.SectionName).Bind(securityOptions);
+builder.Services.AddSingleton(securityOptions);
 
 // ── 请求体大小上限（上传 100MB，留出余量） ────────────────────────────
 builder.WebHost.ConfigureKestrel(options =>
@@ -113,6 +125,12 @@ builder.Services
         options.Cookie.Name = "OfficeTool.Auth";
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Lax;
+
+        // HTTPS 部署（反向代理终结 TLS）设 Security:ForceSecureCookie=true 后，
+        // Cookie 只在加密连接上传送；纯 HTTP 内网部署保持 false，否则登录直接失效
+        options.Cookie.SecurePolicy = securityOptions.ForceSecureCookie
+            ? CookieSecurePolicy.Always
+            : CookieSecurePolicy.SameAsRequest;
 
         // 绝对过期，不做滑动续期：原来 SlidingExpiration=true 意味着只要用户还在点，
         // 这张票就永远不过期，「停用账号」也就永远等不到自然失效的那一天。
@@ -287,7 +305,7 @@ builder.Services.AddSingleton<IFileStore>(sp =>
 builder.Services.AddSingleton<PathLayout>(sp => new PathLayout(sp.GetRequiredService<StorageOptions>()));
 builder.Services.AddSingleton<DocumentNamingService>();
 
-builder.Services.AddScoped<RequestContext>();
+builder.Services.AddScoped<RequestContext>(); // 依赖 SecurityOptions（可信代理列表）
 builder.Services.AddScoped<CredentialProtector>();
 builder.Services.AddScoped<OperationLogService>();
 builder.Services.AddScoped<ProjectCatalogService>();

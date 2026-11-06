@@ -90,7 +90,7 @@ public class ProjectCatalogServiceTests
                     "Test"));
         }
 
-        return new RequestContext(accessor);
+        return new RequestContext(accessor, new OfficeTool.Core.Options.SecurityOptions());
     }
 
     [Fact]

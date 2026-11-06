@@ -59,6 +59,8 @@ services:
       Storage__AttachmentsRoot: /data/Attachments
       # 提取规则同样单独存放（规则本体是文件，按 项目/检项 两级）
       Storage__RulesRoot: /data/ExtractionRules
+      # ELN 记录附件（按 项目/检项/记录号 三级）
+      Storage__RecordsRoot: /data/Records
       # 回收站（删除的文件移入此处，可恢复）。与业务根同一挂载卷。
       Storage__TrashRoot: /data/_trash
 
@@ -68,6 +70,7 @@ services:
       Storage__ClientDataRoot: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\Data'
       Storage__ClientAttachmentsRoot: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\Attachments'
       Storage__ClientRulesRoot: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\ExtractionRules'
+      Storage__ClientRecordsRoot: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\Records'
 
       # 桌面插件安装包地址（可留空，界面会隐藏下载入口）
       DesktopPlugin__DownloadUrl: '\\${NAS_HOST:-NAS}\${SHARE_NAME:-OfficeDocs}\plugin\OfficeToolPlugin.exe'

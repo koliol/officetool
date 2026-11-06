@@ -53,7 +53,7 @@ public class AdminServiceTests
                 new ClaimsIdentity([new Claim(ClaimTypes.Name, userName)], "Test"));
         }
 
-        return new RequestContext(accessor);
+        return new RequestContext(accessor, new OfficeTool.Core.Options.SecurityOptions());
     }
 
     private sealed class Harness : IDisposable

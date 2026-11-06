@@ -215,7 +215,6 @@ public class Project
 
     public DateTime CreatedAt { get; set; }
 
-    public string? CreatedByIp { get; set; }
 
     public List<CheckItem> Checks { get; set; } = [];
 }
@@ -232,7 +231,6 @@ public class CheckItem
 
     public DateTime CreatedAt { get; set; }
 
-    public string? CreatedByIp { get; set; }
 
     public Project? Project { get; set; }
 }
@@ -259,7 +257,6 @@ public class Template
 
     public DateTime CreatedAt { get; set; }
 
-    public string? UploadedByIp { get; set; }
 }
 
 /// <summary>文档副本（设计文档 §6.1 Documents）。</summary>
@@ -285,7 +282,6 @@ public class Document
 
     public DateTime CreatedAt { get; set; }
 
-    public string? CreatedByIp { get; set; }
 }
 
 /// <summary>
@@ -338,7 +334,6 @@ public class TrashItem
 
     public DateTime DeletedAt { get; set; }
 
-    public string? DeletedByIp { get; set; }
 }
 
 /// <summary>操作日志（设计文档 §6.1 OperationLogs）。</summary>

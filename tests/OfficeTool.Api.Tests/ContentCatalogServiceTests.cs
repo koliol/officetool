@@ -136,7 +136,7 @@ public sealed class ContentCatalogServiceTests
             new System.Security.Claims.ClaimsIdentity(
                 [new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, "tester")],
                 "Test"));
-        return new RequestContext(accessor);
+        return new RequestContext(accessor, new OfficeTool.Core.Options.SecurityOptions());
     }
 
     // ── 上传 ────────────────────────────────────────────────────────

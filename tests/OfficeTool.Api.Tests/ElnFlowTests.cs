@@ -66,7 +66,7 @@ public sealed class ElnFlowTests
             Access = new AccessControlService(
                 Db, new MemoryCache(new MemoryCacheOptions()), auth, Log<AccessControlService>());
 
-            Context = new RequestContext(Accessor);
+            Context = new RequestContext(Accessor, new OfficeTool.Core.Options.SecurityOptions());
             var logs = new OperationLogService(Db, Context, Access, Log<OperationLogService>());
             Catalog = new ProjectCatalogService(Db, Layout, Store, logs, Context, Access);
 
