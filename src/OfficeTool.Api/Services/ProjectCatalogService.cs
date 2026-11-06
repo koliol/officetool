@@ -218,6 +218,9 @@ public sealed class ProjectCatalogService(
         _db.Projects.Remove(project);
         await _db.SaveChangesAsync(ct);
 
+        // 整个项目的检项都没了：缓存里那些 id 必须一起作废
+        await _access.InvalidateAllAsync(ct);
+
         await _logs.WriteAsync("删除项目", name, success: true, ct: ct);
     }
 
@@ -269,6 +272,10 @@ public sealed class ProjectCatalogService(
         _db.Checks.Add(check);
         await _db.SaveChangesAsync(ct);
 
+        // 新检项不在任何人缓存里的「项目级授权展开集合」中，不失效缓存就会出现
+        // 「我建完的检项，同事要等 10 分钟才打得开」。结构变了只能全局失效。
+        await _access.InvalidateAllAsync(ct);
+
         await _logs.WriteAsync("新建检项", $"{projectName}/{name}", success: true, ct: ct);
         return new CheckDto(check.Id, check.Name, check.ProjectId, check.CreatedAt);
     }
@@ -307,6 +314,9 @@ public sealed class ProjectCatalogService(
 
         _db.Checks.Remove(check);
         await _db.SaveChangesAsync(ct);
+
+        // 已删检项的 id 还留在别人的可见集合里：消息记录、回收站筛选项都会跟着错
+        await _access.InvalidateAllAsync(ct);
 
         await _logs.WriteAsync("删除检项", $"{projectName}/{checkName}", success: true, ct: ct);
     }

@@ -105,27 +105,23 @@ public sealed class RuleCatalogService(
         var directory = _layout.RuleDirectory(project.Name, check.Name);
         var fullPath = PathGuard.CombineUnderRoot(directory, safeName);
 
-        if (_store.FileExists(fullPath))
+        // 忽略大小写判重：ext4 上 a.json 与 A.json 能并存，Windows 侧却看成同一个文件
+        if (FileNames.ExistsIgnoringCase(_store, directory, safeName))
         {
             throw new ConflictException($"同目录下已存在同名规则：{safeName}，请先重命名或删除。");
         }
 
         try
         {
-            _store.CreateDirectory(directory);
-
-            using (var target = _store.CreateNew(fullPath))
-            {
-                await content.CopyToAsync(target, ct);
-            }
-
-            var meta = _store.GetMeta(fullPath);
-
-            if (meta.Size > _upload.MaxSizeBytes)
-            {
-                _store.DeleteFile(fullPath);
-                throw new BadRequestException($"规则文件超过大小上限 {_upload.MaxSizeMB}MB。");
-            }
+            // 与模板/附件一致：临时文件写完才转正，中断的上传不会变成「有效规则」
+            var meta = await StagedUpload.WriteAsync(
+                _store,
+                directory,
+                fullPath,
+                content,
+                _upload.MaxSizeBytes,
+                $"规则文件超过大小上限 {_upload.MaxSizeMB}MB。",
+                ct);
 
             await _logs.WriteAsync(
                 "上传提取规则", _layout.RuleRelativePath(project.Name, check.Name, safeName), success: true, ct: ct);

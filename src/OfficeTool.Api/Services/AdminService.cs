@@ -34,6 +34,7 @@ public sealed class AdminService(
     RequestContext request,
     IAccessControlService access,
     OperationLogService logs,
+    ApiTokenService tokens,
     ILogger<AdminService> logger)
 {
     private readonly AppDbContext _db = db;
@@ -41,6 +42,7 @@ public sealed class AdminService(
     private readonly RequestContext _request = request;
     private readonly IAccessControlService _access = access;
     private readonly OperationLogService _logs = logs;
+    private readonly ApiTokenService _tokens = tokens;
     private readonly ILogger<AdminService> _logger = logger;
 
     // ══════════════════════════════════════════════════════════════
@@ -187,6 +189,15 @@ public sealed class AdminService(
 
         await _db.SaveChangesAsync(ct);
 
+        // 禁用要立刻生效：光改库的话，对方手里的 Cookie 还能用到自然过期，
+        // 令牌也照旧可用。Cookie 靠 SecurityStamp 派生值变化失效，令牌在这里显式吊销。
+        if (dto.IsEnabled == false)
+        {
+            var revoked = await _tokens.RevokeAllAsync(user.Id, ct);
+            _logger.LogInformation(
+                "用户 {UserName} 已被停用，同时吊销 {Count} 条访问令牌。", user.UserName, revoked);
+        }
+
         // 禁用 / 改超管位都会改变可见集合与判定结果，缓存必须立刻失效
         await _access.InvalidateAsync([user.UserName], ct);
 
@@ -220,7 +231,13 @@ public sealed class AdminService(
 
         await _db.SaveChangesAsync(ct);
 
-        _logger.LogInformation("管理员 {Admin} 重置了 {UserName} 的密码。", me.UserName, user.UserName);
+        // 管理员代办的重置同样要断掉已有登录态与令牌：密码已被第三方转述过，
+        // 旧会话若还活着，「重置」就等于只换了个没人用的密码。
+        var revokedTokens = await _tokens.RevokeAllAsync(user.Id, ct);
+
+        _logger.LogInformation(
+            "管理员 {Admin} 重置了 {UserName} 的密码（已作废旧会话，吊销 {TokenCount} 条令牌）。",
+            me.UserName, user.UserName, revokedTokens);
         await _logs.WriteAsync("重置密码", user.UserName, success: true, ct: ct);
 
         return new ResetPasswordResponse { Password = password };

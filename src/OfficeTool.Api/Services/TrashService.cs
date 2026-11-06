@@ -18,8 +18,11 @@ public sealed class TrashService(
     IFileStore store,
     OperationLogService logs,
     RequestContext request,
-    IAccessControlService access)
+    IAccessControlService access,
+    ILogger<TrashService> logger)
 {
+    private readonly ILogger<TrashService> _logger = logger;
+
     private Task<UserAccess> CurrentAccessAsync(CancellationToken ct) => access.ResolveAccessAsync(request, ct);
 
     /// <summary>
@@ -154,17 +157,33 @@ public sealed class TrashService(
                 $"原位置已存在同名文件，无法恢复：{item.OriginalRelativePath}。请先处理冲突文件。");
         }
 
+        // 先把库这一侧该做的事全部校验完、准备好，再动文件。
+        //
+        // 原实现是「先 MoveFile 再建索引」：原项目已被删除时，文件已经移回业务目录、
+        // 回收站条目还在、库里却没有记录 —— 此后既恢复不了（文件已不在回收站），
+        // 也彻底删不掉（删的是条指向不存在文件的记录），只能人工进共享盘收拾。
+        var pending = await PrepareRestoreAsync(item, trashPath, ct);
+
         store.MoveFile(trashPath, restorePath, overwrite: false);
 
-        // 模板/文档进库：删除时已从活动表移除，恢复必须重建索引记录。
-        // 附件/规则本体不进库，只需移回文件（规则备注删除时已清，恢复后备注为空）。
-        if (item.Kind is nameof(TrashKind.Template) or nameof(TrashKind.Document))
+        try
         {
-            await RestoreCatalogAsync(item, restorePath, ct);
-        }
+            // 模板/文档进库：删除时已从活动表移除，恢复必须重建索引记录。
+            // 附件/规则本体不进库，只需移回文件（规则备注删除时已清，恢复后备注为空）。
+            if (pending is not null)
+            {
+                db.Add(pending);
+            }
 
-        db.TrashItems.Remove(item);
-        await db.SaveChangesAsync(ct);
+            db.TrashItems.Remove(item);
+            await db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            // 库没提交成功就把文件退回回收站，回到「文件在回收站 + 条目在库」的原状
+            MoveBackQuietly(restorePath, trashPath);
+            throw;
+        }
 
         await logs.WriteAsync(
             "从回收站恢复",
@@ -203,8 +222,19 @@ public sealed class TrashService(
         _ => throw new BadRequestException($"未知回收站类别：{kind}"),
     };
 
-    private async Task RestoreCatalogAsync(TrashItem item, string restoredFullPath, CancellationToken ct)
+    /// <summary>
+    /// 生成恢复时要写回的索引记录（附件 / 规则本体不进库，返回 null）。
+    ///
+    /// 所有可能失败的前置条件都在这里做完 —— 一旦开始移动文件，就不该再抛可预期的异常。
+    /// 元数据从**回收站里的文件**取：它就是要被移回去的那一份，移动不改大小与修改时间。
+    /// </summary>
+    private async Task<object?> PrepareRestoreAsync(TrashItem item, string trashPath, CancellationToken ct)
     {
+        if (item.Kind is not (nameof(TrashKind.Template) or nameof(TrashKind.Document)))
+        {
+            return null;
+        }
+
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Name == item.Project, ct)
             ?? throw new NotFoundException($"原项目已不存在，无法恢复库记录：{item.Project}");
 
@@ -212,46 +242,65 @@ public sealed class TrashService(
             c => c.ProjectId == project.Id && c.Name == item.Check, ct)
             ?? throw new NotFoundException($"原检项已不存在，无法恢复库记录：{item.Project}/{item.Check}");
 
-        var meta = store.GetMeta(restoredFullPath);
+        var meta = store.GetMeta(trashPath);
         var extension = Path.GetExtension(item.FileName);
 
         if (item.Kind == nameof(TrashKind.Template))
         {
             var exists = await db.Templates.AnyAsync(
                 t => t.ProjectId == project.Id && t.CheckId == check.Id && t.FileName == item.FileName, ct);
-            if (!exists)
+            if (exists)
             {
-                db.Templates.Add(new Template
-                {
-                    ProjectId = project.Id,
-                    CheckId = check.Id,
-                    FileName = item.FileName,
-                    RelativePath = item.OriginalRelativePath,
-                    Extension = extension,
-                    Size = meta.Size,
-                    ModifiedAt = meta.ModifiedAt,
-                    CreatedAt = DateTime.Now,
-                });
+                return null;
+            }
+
+            return new Template
+            {
+                ProjectId = project.Id,
+                CheckId = check.Id,
+                FileName = item.FileName,
+                RelativePath = item.OriginalRelativePath,
+                Extension = extension,
+                Size = meta.Size,
+                ModifiedAt = meta.ModifiedAt,
+                CreatedAt = DateTime.Now,
+            };
+        }
+
+        var documentExists = await db.Documents.AnyAsync(
+            d => d.ProjectId == project.Id && d.CheckId == check.Id && d.FileName == item.FileName, ct);
+        if (documentExists)
+        {
+            return null;
+        }
+
+        return new Document
+        {
+            ProjectId = project.Id,
+            CheckId = check.Id,
+            FileName = item.FileName,
+            RelativePath = item.OriginalRelativePath,
+            SourceTemplatePath = string.Empty,
+            Extension = extension,
+            Size = meta.Size,
+            CreatedAt = DateTime.Now,
+        };
+    }
+
+    /// <summary>恢复失败时的回退：把文件退回回收站。失败只能记日志，寄希望于人工处理。</summary>
+    private void MoveBackQuietly(string from, string to)
+    {
+        try
+        {
+            if (store.FileExists(from) && !store.FileExists(to))
+            {
+                store.MoveFile(from, to, overwrite: false);
             }
         }
-        else
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            var exists = await db.Documents.AnyAsync(
-                d => d.ProjectId == project.Id && d.CheckId == check.Id && d.FileName == item.FileName, ct);
-            if (!exists)
-            {
-                db.Documents.Add(new Document
-                {
-                    ProjectId = project.Id,
-                    CheckId = check.Id,
-                    FileName = item.FileName,
-                    RelativePath = item.OriginalRelativePath,
-                    SourceTemplatePath = string.Empty,
-                    Extension = extension,
-                    Size = meta.Size,
-                    CreatedAt = DateTime.Now,
-                });
-            }
+            _logger.LogError(ex,
+                "恢复未完成且文件退不回回收站，需要人工处理：{From} → {To}", from, to);
         }
     }
 

@@ -100,6 +100,38 @@ public sealed class ApiTokenService(
     }
 
     /// <summary>
+    /// 吊销某用户**全部**未吊销令牌。用于改密 / 重置密码 / 停用账户：
+    /// 令牌是长期凭据，不受密码变更影响，不主动清掉就等于「改了密码，旧脚本照样能用」。
+    ///
+    /// 与 <see cref="RevokeAsync"/> 一样逐条清正向缓存，正常情况下立即生效。
+    /// </summary>
+    public async Task<int> RevokeAllAsync(int userId, CancellationToken ct = default)
+    {
+        var hashes = await _db.ApiTokens
+            .AsNoTracking()
+            .Where(x => x.UserId == userId && !x.IsRevoked)
+            .Select(x => x.TokenHash)
+            .ToListAsync(ct);
+
+        if (hashes.Count == 0)
+        {
+            return 0;
+        }
+
+        await _db.ApiTokens
+            .Where(x => x.UserId == userId && !x.IsRevoked)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.IsRevoked, true), ct);
+
+        foreach (var hash in hashes)
+        {
+            _cache.Remove(VerifyCacheKey(hash));
+        }
+
+        _logger.LogInformation("已吊销用户 {UserId} 的 {Count} 条访问令牌（凭据或状态变更）。", userId, hashes.Count);
+        return hashes.Count;
+    }
+
+    /// <summary>
     /// 校验明文令牌并返回身份。
     ///
     /// 结果缓存 2 分钟的取舍：插件每打开一次文档都要打一次 API，

@@ -86,27 +86,23 @@ public sealed class AttachmentService(
         var directory = _layout.AttachmentDirectory(project.Name, check.Name);
         var fullPath = PathGuard.CombineUnderRoot(directory, safeName);
 
-        if (_store.FileExists(fullPath))
+        // 忽略大小写判重：NAS 是 ext4，X.pdf 与 x.pdf 能并存，Windows 侧却看成同一个文件
+        if (FileNames.ExistsIgnoringCase(_store, directory, safeName))
         {
             throw new ConflictException($"同目录下已存在同名附件：{safeName}，请先重命名或删除。");
         }
 
         try
         {
-            _store.CreateDirectory(directory);
-
-            using (var target = _store.CreateNew(fullPath))
-            {
-                await content.CopyToAsync(target, ct);
-            }
-
-            var meta = _store.GetMeta(fullPath);
-
-            if (meta.Size > _upload.MaxSizeBytes)
-            {
-                _store.DeleteFile(fullPath);
-                throw new BadRequestException($"附件超过大小上限 {_upload.MaxSizeMB}MB。");
-            }
+            // 与模板上传共用「先临时、后转正」的落盘策略：中断的上传不留在业务目录里
+            var meta = await StagedUpload.WriteAsync(
+                _store,
+                directory,
+                fullPath,
+                content,
+                _upload.MaxSizeBytes,
+                $"附件超过大小上限 {_upload.MaxSizeMB}MB。",
+                ct);
 
             await _logs.WriteAsync(
                 "上传附件", _layout.AttachmentRelativePath(project.Name, check.Name, safeName), success: true, ct: ct);

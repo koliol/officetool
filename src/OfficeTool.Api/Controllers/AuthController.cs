@@ -196,6 +196,18 @@ public sealed class AuthController(
         user.MustChangePassword = false;
         await _db.SaveChangesAsync(ct);
 
+        // 改密等于「把别人手里的东西全部作废」：
+        // ① 全部 API 令牌吊销（令牌是长期凭据，不受密码影响，不主动清就等于没改）；
+        // ② 其他设备上的旧 Cookie 由 SecurityStamp 派生值变化自动失效；
+        // ③ 当前这次请求重新签发票，所以本人不会被自己的改密踢下线。
+        var revokedTokens = await _tokens.RevokeAllAsync(user.Id, ct);
+
+        await SignInAsync(user);
+
+        _logger.LogInformation(
+            "用户 {UserName} 修改了密码，已作废旧会话，并吊销 {TokenCount} 条访问令牌。",
+            user.UserName, revokedTokens);
+
         return NoContent();
     }
 
@@ -429,6 +441,10 @@ public sealed class AuthController(
         {
             new(ClaimTypes.Name, user.UserName),
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+
+            // 票值绑定签发时的账号状态。改密 / 停用 / 升降超管位之后，
+            // OnValidatePrincipal 会发现它对不上，这张票立即作废（见 SecurityStamp）。
+            new(SecurityStamp.ClaimType, SecurityStamp.Compute(user)),
         };
 
         if (user.IsSystemAdmin)

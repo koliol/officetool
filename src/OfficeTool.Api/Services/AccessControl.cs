@@ -167,6 +167,16 @@ public interface IAccessControlService
 
     /// <summary>使某个组<strong>全体成员</strong>的权限缓存失效。授权变更后必须调用。</summary>
     Task InvalidateGroupAsync(int groupId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 使**所有人**的权限缓存失效。
+    ///
+    /// 用于「结构变了、但不知道哪些人受影响」的场景：新建/删除检项后，
+    /// 项目级授权（<c>CheckId == null</c>）已展开成检项 id 集合存进各人的缓存，
+    /// 新检项不在任何人的集合里 —— 表现就是「新建的别人打不开」，
+    /// 而且要等缓存自然过期（默认 10 分钟）才自愈。
+    /// </summary>
+    Task InvalidateAllAsync(CancellationToken ct = default);
 }
 
 public sealed class AccessControlService(
@@ -265,8 +275,29 @@ public sealed class AccessControlService(
         await InvalidateAsync(names, ct);
     }
 
+    /// <summary>
+    /// 全局失效：不枚举缓存键（IMemoryCache 不支持），而是把键里的「纪元」换掉，
+    /// 旧条目自然再也命中不到、到期后被回收。比维护一份键列表更省心：
+    /// 注册多实例时也不需要跨进程同步（最坏只是多保留几份到期前的条目）。
+    /// </summary>
+    public Task InvalidateAllAsync(CancellationToken ct = default)
+    {
+        _cache.Set(EpochKey, Guid.NewGuid().ToString("N"));
+        return Task.CompletedTask;
+    }
+
     /// <summary>缓存键。写入与失效必须走同一个函数，否则大小写差异会让失效静默失败。</summary>
-    private static string CacheKey(string userName) => $"acl:{userName.ToLowerInvariant()}";
+    private string CacheKey(string userName) =>
+        $"acl:{Epoch}:{userName.ToLowerInvariant()}";
+
+    private const string EpochKey = "acl:epoch";
+
+    private string Epoch =>
+        _cache.GetOrCreate(EpochKey, entry =>
+        {
+            entry.Priority = CacheItemPriority.NeverRemove;
+            return Guid.NewGuid().ToString("N");
+        })!;
 
     private async Task<UserAccess> BuildAsync(User user, CancellationToken ct)
     {

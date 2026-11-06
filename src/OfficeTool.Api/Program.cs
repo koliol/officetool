@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
@@ -104,7 +106,10 @@ builder.Services
         options.Cookie.Name = "OfficeTool.Auth";
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Lax;
-        options.SlidingExpiration = true;
+
+        // 绝对过期，不做滑动续期：原来 SlidingExpiration=true 意味着只要用户还在点，
+        // 这张票就永远不过期，「停用账号」也就永远等不到自然失效的那一天。
+        options.SlidingExpiration = false;
         options.ExpireTimeSpan = TimeSpan.FromHours(Math.Max(1, authOptions.CookieHours));
 
         // 接口性质：未认证返回 401，而不是重定向到登录页（前端自己决定跳哪）
@@ -118,6 +123,44 @@ builder.Services
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return Task.CompletedTask;
+        };
+
+        // ── 票 ↔ 库 一致性校验 ────────────────────────────────────────────
+        //
+        // Cookie 是自包含的：签发之后，服务端就不再有机会收回它。改密、重置密码、
+        // 停用账号、撤下超管位这些动作如果只改库，旧 Cookie 会一直有效到自然过期——
+        // 「已经停用了」与「他还能进」同时成立，是最容易被忽略的权限事故。
+        //
+        // 这里每个请求回查一次用户状态（SQLite 上是一次主键/唯一索引点查），
+        // 状态与票不一致就拒绝并清 Cookie。代价是每请求一次查询，换来的是
+        // 「停用立即生效」——权限系统的正确性优先于这点开销。
+        options.Events.OnValidatePrincipal = async context =>
+        {
+            if (!authOptions.Enabled)
+            {
+                return;
+            }
+
+            var principal = context.Principal;
+            var rawName = principal?.Identity?.Name;
+
+            if (principal?.Identity?.IsAuthenticated != true || string.IsNullOrWhiteSpace(rawName))
+            {
+                return;
+            }
+
+            var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+            var name = AccessControlService.NormalizeAccountName(rawName);
+
+            var user = await db.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.UserName == name, context.HttpContext.RequestAborted);
+
+            if (user is null || !user.IsEnabled || !SecurityStamp.Matches(principal.FindFirstValue(SecurityStamp.ClaimType), user))
+            {
+                context.RejectPrincipal();
+                await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            }
         };
     })
     .AddNegotiate(options =>

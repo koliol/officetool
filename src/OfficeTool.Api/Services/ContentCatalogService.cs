@@ -25,7 +25,8 @@ public sealed class ContentCatalogService(
     OperationLogService logs,
     TrashService trash,
     RequestContext request,
-    IAccessControlService access)
+    IAccessControlService access,
+    ILogger<ContentCatalogService> logger)
 {
     private readonly AppDbContext _db = db;
     private readonly ProjectCatalogService _catalog = catalog;
@@ -38,6 +39,7 @@ public sealed class ContentCatalogService(
     private readonly TrashService _trash = trash;
     private readonly RequestContext _request = request;
     private readonly IAccessControlService _access = access;
+    private readonly ILogger<ContentCatalogService> _logger = logger;
 
     /// <summary>
     /// 当前请求的权限视图。有 10 分钟缓存（见 <c>Auth:AclCacheMinutes</c>），
@@ -145,28 +147,25 @@ public sealed class ContentCatalogService(
         var directory = _layout.TemplateDirectory(project.Name, check.Name);
         var fullPath = PathGuard.CombineUnderRoot(directory, safeName);
 
-        if (_store.FileExists(fullPath))
+        // 忽略大小写判重：NAS 是 ext4，Report.docx 与 report.docx 能并存，
+        // 但 Windows 经 SMB 看到的是同一个名字（见 FileNames）
+        if (FileNames.ExistsIgnoringCase(_store, directory, safeName))
         {
             throw new ConflictException($"同目录下已存在同名模板：{safeName}，请先重命名或删除。");
         }
 
         try
         {
-            _store.CreateDirectory(directory);
-
-            // 先写占位再灌内容，避免半截文件被当成有效模板
-            using (var target = _store.CreateNew(fullPath))
-            {
-                await content.CopyToAsync(target, ct);
-            }
-
-            var meta = _store.GetMeta(fullPath);
-
-            if (meta.Size > _upload.MaxSizeBytes)
-            {
-                _store.DeleteFile(fullPath);
-                throw new BadRequestException($"文件超过大小上限 {_upload.MaxSizeMB}MB。");
-            }
+            // 先写临时文件、写完才转正：上传中断/超限/转正失败都不会在业务目录里
+            // 留下半截文件（那会被元数据同步当成有效模板补录进库）。
+            var meta = await StagedUpload.WriteAsync(
+                _store,
+                directory,
+                fullPath,
+                content,
+                _upload.MaxSizeBytes,
+                $"文件超过大小上限 {_upload.MaxSizeMB}MB。",
+                ct);
 
             var entity = new Template
             {
@@ -265,7 +264,7 @@ public sealed class ContentCatalogService(
             targetName = NameValidator.ValidateFileName(request.NewFileName);
             NameValidator.EnsureAllowedExtension(Path.GetExtension(targetName), _upload.AllowedExtensions);
 
-            if (_store.FileExists(PathGuard.CombineUnderRoot(targetDirectory, targetName)))
+            if (FileNames.ExistsIgnoringCase(_store, targetDirectory, targetName))
             {
                 throw new ConflictException($"目标文件夹已存在同名模板：{targetName}");
             }
@@ -289,7 +288,17 @@ public sealed class ContentCatalogService(
         };
 
         _db.Templates.Add(entity);
-        await _db.SaveChangesAsync(ct);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            // 库没写进去，磁盘上的副本就成了没人认领的孤儿文件，撤掉
+            TryDeleteQuietly(targetPath);
+            throw;
+        }
 
         await _logs.WriteAsync("复制模板", entity.RelativePath, success: true, ct: ct);
         return ToTemplateDto(entity, targetProject.Name, targetCheck.Name);
@@ -312,7 +321,7 @@ public sealed class ContentCatalogService(
         var oldPath = PathGuard.CombineUnderRoot(directory, oldName);
         var newPath = PathGuard.CombineUnderRoot(directory, newName);
 
-        if (_store.FileExists(newPath))
+        if (FileNames.ConflictsWithAnotherFile(_store, directory, oldName, newName))
         {
             throw new ConflictException($"目标文件名已存在：{newName}");
         }
@@ -320,16 +329,31 @@ public sealed class ContentCatalogService(
         var extension = NameValidator.EnsureAllowedExtension(
             Path.GetExtension(newName), _upload.AllowedExtensions);
 
-        _store.MoveFile(oldPath, newPath, overwrite: false);
+        // 顺序是「复制到新名 → 提交库 → 删旧文件」，不能反。
+        // 旧写法先 MoveFile 再 SaveChanges：写库一失败，库里仍指向旧路径而磁盘上
+        // 文件已经改名，记录直接变成指向不存在文件的死行，且没有回滚路径。
+        // 现在最坏情况是「新旧各存一份」——数据完整，只是需要人工删掉多余的一份。
+        _store.CopyFile(oldPath, newPath, overwrite: false);
 
-        var meta = _store.GetMeta(newPath);
-        entity.FileName = newName;
-        entity.RelativePath = _layout.TemplateRelativePath(project.Name, check.Name, newName);
-        entity.Extension = extension;
-        entity.Size = meta.Size;
-        entity.ModifiedAt = meta.ModifiedAt;
+        try
+        {
+            var meta = _store.GetMeta(newPath);
+            entity.FileName = newName;
+            entity.RelativePath = _layout.TemplateRelativePath(project.Name, check.Name, newName);
+            entity.Extension = extension;
+            entity.Size = meta.Size;
+            entity.ModifiedAt = meta.ModifiedAt;
 
-        await _db.SaveChangesAsync(ct);
+            await _db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            // 库没提交成功，把刚复制出来的新文件撤掉，磁盘回到改动前的样子
+            TryDeleteQuietly(newPath);
+            throw;
+        }
+
+        DeleteOriginalQuietly(oldPath, "重命名模板");
 
         await _logs.WriteAsync("重命名模板", entity.RelativePath, success: true, ct: ct);
         return ToTemplateDto(entity, project.Name, check.Name);
@@ -480,7 +504,17 @@ public sealed class ContentCatalogService(
             };
 
             _db.Documents.Add(entity);
-            await _db.SaveChangesAsync(ct);
+
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+            }
+            catch
+            {
+                // 命名服务已把文件原子写出来，库没提交就得撤掉，否则留下无人认领的孤儿文件
+                TryDeleteQuietly(allocated.FullPath);
+                throw;
+            }
 
             await _logs.WriteAsync("新建文档", entity.RelativePath, success: true, ct: ct);
             return ToDocumentDto(entity, project.Name, check.Name);
@@ -514,20 +548,36 @@ public sealed class ContentCatalogService(
         var oldPath = PathGuard.CombineUnderRoot(directory, oldName);
         var newPath = PathGuard.CombineUnderRoot(directory, newName);
 
-        if (_store.FileExists(newPath))
+        if (FileNames.ConflictsWithAnotherFile(_store, directory, oldName, newName))
         {
             throw new ConflictException($"目标文件名已存在：{newName}");
         }
 
-        _store.MoveFile(oldPath, newPath, overwrite: false);
+        // 模板侧一直有这道校验、文档侧漏了：不校验就能把 .docx 改成 .exe，
+        // 在共享盘上留下一个 Windows 客户端会直接尝试运行的扩展名。
+        var extension = NameValidator.EnsureAllowedExtension(
+            Path.GetExtension(newName), _upload.AllowedExtensions);
 
-        var meta = _store.GetMeta(newPath);
-        entity.FileName = newName;
-        entity.RelativePath = _layout.DataRelativePath(project.Name, check.Name, newName);
-        entity.Extension = Path.GetExtension(newName);
-        entity.Size = meta.Size;
+        // 与模板重命名同一套补偿顺序：复制 → 提交库 → 删旧文件（理由见 RenameTemplateAsync）
+        _store.CopyFile(oldPath, newPath, overwrite: false);
 
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            var meta = _store.GetMeta(newPath);
+            entity.FileName = newName;
+            entity.RelativePath = _layout.DataRelativePath(project.Name, check.Name, newName);
+            entity.Extension = extension;
+            entity.Size = meta.Size;
+
+            await _db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            TryDeleteQuietly(newPath);
+            throw;
+        }
+
+        DeleteOriginalQuietly(oldPath, "重命名文档");
 
         await _logs.WriteAsync("重命名文档", entity.RelativePath, success: true, ct: ct);
         return ToDocumentDto(entity, project.Name, check.Name);
@@ -619,7 +669,7 @@ public sealed class ContentCatalogService(
             targetName = NameValidator.ValidateFileName(request.NewFileName);
             NameValidator.EnsureAllowedExtension(Path.GetExtension(targetName), _upload.AllowedExtensions);
 
-            if (_store.FileExists(PathGuard.CombineUnderRoot(targetDirectory, targetName)))
+            if (FileNames.ExistsIgnoringCase(_store, targetDirectory, targetName))
             {
                 throw new ConflictException($"目标文件夹已存在同名文档：{targetName}");
             }
@@ -647,7 +697,17 @@ public sealed class ContentCatalogService(
             };
 
             _db.Documents.Add(entity);
-            await _db.SaveChangesAsync(ct);
+
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+            }
+            catch
+            {
+                // 同复制模板：库没提交就撤掉磁盘上的副本，避免孤儿文件
+                TryDeleteQuietly(targetPath);
+                throw;
+            }
 
             await _logs.WriteAsync(
                 "复制文档", $"{source.RelativePath} → {entity.RelativePath}", success: true, ct: ct);
@@ -707,7 +767,7 @@ public sealed class ContentCatalogService(
         var templatesAdded = await SyncOneAsync(
             _layout.TemplatesRoot,
             "模板",
-            diskEntries: ScanRoot(_layout.TemplatesRoot, "*.docx", "*.xlsx", "*.pptx", "*.docm", "*.xlsm", "*.pptm"),
+            diskEntries: ScanRoot(_layout.TemplatesRoot, messages, "*.docx", "*.xlsx", "*.pptx", "*.docm", "*.xlsm", "*.pptm"),
             dbEntries: await _db.Templates.ToListAsync(ct),
             dbRelative: t => t.RelativePath,
             addFromDisk: (relative, meta) =>
@@ -737,7 +797,7 @@ public sealed class ContentCatalogService(
         var documentsAdded = await SyncOneAsync(
             _layout.DataRoot,
             "文档",
-            diskEntries: ScanRoot(_layout.DataRoot, "*.docx", "*.xlsx", "*.pptx", "*.docm", "*.xlsm", "*.pptm"),
+            diskEntries: ScanRoot(_layout.DataRoot, messages, "*.docx", "*.xlsx", "*.pptx", "*.docm", "*.xlsm", "*.pptm"),
             dbEntries: await _db.Documents.ToListAsync(ct),
             dbRelative: d => d.RelativePath,
             addFromDisk: (relative, meta) =>
@@ -828,7 +888,8 @@ public sealed class ContentCatalogService(
         return (added, removed);
     }
 
-    private IReadOnlyList<(string Relative, FileMeta Meta)> ScanRoot(string root, params string[] patterns)
+    private IReadOnlyList<(string Relative, FileMeta Meta)> ScanRoot(
+        string root, List<string> skipped, params string[] patterns)
     {
         if (!_store.DirectoryExists(root))
         {
@@ -851,6 +912,23 @@ public sealed class ContentCatalogService(
                     foreach (var file in _store.ListFiles(checkDir).Where(f => MatchesPattern(f.FileName, pattern)))
                     {
                         var relative = PathGuard.ToRelative(root, file.FullPath);
+
+                        // 0 字节只可能是「上传写了一半就断了」或「共享盘上被别的程序占位」，
+                        // 都不是一份可用的文档。补录进库只会给用户一条点开就报错的记录。
+                        if (file.Size == 0)
+                        {
+                            skipped.Add($"跳过（0 字节，疑似上传中断或占位文件）：{relative}");
+                            continue;
+                        }
+
+                        // Word/Excel 打开文档时会在同目录留下 ~$xxx.docx 的锁文件，
+                        // 扩展名与真身相同，补录进来就是一条点开 404 的假记录。
+                        if (file.FileName.StartsWith("~$", StringComparison.Ordinal))
+                        {
+                            skipped.Add($"跳过（Office 临时锁文件）：{relative}");
+                            continue;
+                        }
+
                         results.Add((relative, file));
                     }
                 }
@@ -896,6 +974,48 @@ public sealed class ContentCatalogService(
         d.Id, d.FileName, d.Extension, d.Size, d.CreatedAt, project, check,
         d.SourceTemplatePath, d.RelativePath,
         ClientPathBuilder.Build(_storage.ClientDataRoot, _storage.DataRoot, d.RelativePath));
+
+    /// <summary>
+    /// 删除刚写出去、但库没提交成功的文件（写库失败时的回滚）。
+    /// 清理失败只记日志：原始异常更有价值，不能被清理异常盖掉。
+    /// </summary>
+    private void TryDeleteQuietly(string path)
+    {
+        try
+        {
+            if (_store.FileExists(path))
+            {
+                _store.DeleteFile(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "回滚文件失败，可能留下孤儿文件：{Path}", path);
+        }
+    }
+
+    /// <summary>
+    /// 重命名成功后删除旧文件。
+    /// 删不掉时新旧两份并存 —— 数据完整，只是同步可能多认一条重复记录，人工清理即可。
+    /// 比起「旧文件没了、库里指向旧路径」，这是唯一可接受的方向。
+    /// </summary>
+    private void DeleteOriginalQuietly(string path, string action)
+    {
+        try
+        {
+            if (_store.FileExists(path))
+            {
+                _store.DeleteFile(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(
+                ex,
+                "{Action}：旧文件删除失败，新旧两份同时存在，请人工清理（否则同步可能多认一条记录）：{Path}",
+                action, path);
+        }
+    }
 
     private string BuildCopyName(string sourceName, string directory)
     {

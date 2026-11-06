@@ -70,7 +70,8 @@ public class AdminServiceTests
             Cache = new MemoryCache(new MemoryCacheOptions());
             Access = new AccessControlService(Db, Cache, Options, Logger<AccessControlService>());
             var logs = new OperationLogService(Db, ContextFor(asUser), Access, Logger<OperationLogService>());
-            Admin = new AdminService(Db, Options, ContextFor(asUser), Access, logs, Logger<AdminService>());
+            Tokens = new ApiTokenService(Db, Cache, Logger<ApiTokenService>());
+            Admin = new AdminService(Db, Options, ContextFor(asUser), Access, logs, Tokens, Logger<AdminService>());
         }
 
         public AppDbContext Db { get; }
@@ -78,6 +79,7 @@ public class AdminServiceTests
         public AuthOptions Options { get; }
         public IMemoryCache Cache { get; }
         public AccessControlService Access { get; }
+        public ApiTokenService Tokens { get; }
         public AdminService Admin { get; }
 
         public void Dispose() => Cleanup(Db, Path);
@@ -464,6 +466,31 @@ public class AdminServiceTests
 
         var after = await h.Admin.HealthAsync();
         Assert.DoesNotContain(after.UnmanagedProjects, x => x.ProjectName == "P1");
+    }
+
+    /// <summary>
+    /// 停用账号必须同时吊销该用户的访问令牌。
+    ///
+    /// 只改 IsEnabled 的话，令牌校验虽然会拒绝（它每次都查 IsEnabled），
+    /// 但「令牌还在、只是暂时不能用」与「令牌已作废」在审计上是两回事；
+    /// 且重新启用后旧令牌会静默复活 —— 停用的语义应该是断掉，不是暂停。
+    /// </summary>
+    [Fact]
+    public async Task 停用账号应吊销其全部访问令牌()
+    {
+        using var h = new Harness("root");
+        var (_, memberId, _, _, _, _) = await SeedAsync(h.Db);
+
+        var member = await h.Db.Users.FirstAsync(x => x.Id == memberId);
+        var (_, plain) = await h.Tokens.IssueAsync(member, "冒烟脚本", null);
+
+        Assert.NotNull(await h.Tokens.TryResolveAsync(plain));
+
+        await h.Admin.UpdateUserAsync(memberId, new UpdateUserRequest { IsEnabled = false });
+
+        var stored = await h.Db.ApiTokens.AsNoTracking().FirstAsync();
+        Assert.True(stored.IsRevoked);
+        Assert.Null(await h.Tokens.TryResolveAsync(plain));
     }
 
     private static Task<int> CheckIdAsync(AppDbContext db, string name) =>
