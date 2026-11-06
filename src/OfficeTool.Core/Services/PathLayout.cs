@@ -24,6 +24,16 @@ public sealed class PathLayout(StorageOptions storageOptions)
     /// <summary>回收站根。与业务根同级，删除时文件移入此处。</summary>
     public string TrashRoot => PathGuard.NormalizeRoot(_storage.TrashRoot);
 
+    /// <summary>ELN 记录附件根。按 项目/检项/记录号 三级组织。</summary>
+    public string RecordsRoot => PathGuard.NormalizeRoot(_storage.RecordsRoot);
+
+    /// <summary>Records\{项目}\{检项}\{记录号}</summary>
+    public string RecordDirectory(string project, string check, string recordNo)
+    {
+        var segments = BuildSegments(project, check).Append(NameValidator.ValidateCode(recordNo, "记录号")).ToArray();
+        return PathGuard.CombineUnderRoot(RecordsRoot, segments);
+    }
+
     /// <summary>Templates\{项目} 或 Templates\{项目}\{检项}</summary>
     public string TemplateDirectory(string? project, string? check = null)
     {

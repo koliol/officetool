@@ -65,6 +65,19 @@ public sealed class StorageOptions
     public string ClientRulesRoot { get; set; } = string.Empty;
 
     /// <summary>
+    /// 服务端视角：ELN 记录附件根（PDF 原始报告、后续生成的报告）。
+    ///
+    /// 与附件库分开的理由：附件是「挂在模板/文档上的待提取材料」，
+    /// 而记录附件的归属是**某一条记录**，目录也按 项目/检项/记录号 三级组织，
+    /// 混在一起会让"这条记录的原始报告在哪"变成需要查库才能回答的问题。
+    /// 留空时自动推导为 TemplatesRoot 同级的 Records 目录。
+    /// </summary>
+    public string RecordsRoot { get; set; } = string.Empty;
+
+    /// <summary>客户端视角：记录附件根（留空则回退 RecordsRoot）。</summary>
+    public string ClientRecordsRoot { get; set; } = string.Empty;
+
+    /// <summary>
     /// 服务端视角：回收站根。删除的文件物理移入此处，可恢复。
     /// 留空时自动推导为 TemplatesRoot 同级的 <c>_trash</c>。
     /// 必须与业务根处于同一挂载卷（群晖上同为 /data 下），否则跨设备 Move 会失败。
@@ -131,6 +144,17 @@ public sealed class StorageOptions
         if (string.IsNullOrWhiteSpace(ClientRulesRoot))
         {
             ClientRulesRoot = SiblingOf(ClientTemplatesRoot, "ExtractionRules");
+        }
+
+        // ELN 记录附件同样与模板库同级
+        if (string.IsNullOrWhiteSpace(RecordsRoot))
+        {
+            RecordsRoot = SiblingOf(TemplatesRoot, "Records");
+        }
+
+        if (string.IsNullOrWhiteSpace(ClientRecordsRoot))
+        {
+            ClientRecordsRoot = SiblingOf(ClientTemplatesRoot, "Records");
         }
 
         if (string.IsNullOrWhiteSpace(TrashRoot))

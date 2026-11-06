@@ -296,6 +296,12 @@ builder.Services.AddScoped<AttachmentService>();
 builder.Services.AddScoped<RuleCatalogService>();
 builder.Services.AddScoped<TrashService>();
 
+// ── ELN（表单模板 / 记录 / 提取规则 / 解析）────────────────────────────
+builder.Services.AddScoped<FormTemplateService>();
+builder.Services.AddScoped<FormRecordService>();
+builder.Services.AddScoped<ExtractionService>();
+builder.Services.AddScoped<ExtractionRuleAdminService>();
+
 // 开发期内网联调放行所有来源（设计文档 §11 可选 IP 白名单留待二期）
 builder.Services.AddCors(options => options.AddPolicy("internal", policy => policy
     .AllowAnyOrigin()
@@ -314,6 +320,9 @@ using (var scope = app.Services.CreateScope())
 
     // EF Migrations + 旧 EnsureCreated 库 Baseline（替代原先的 EnsureCreated + 手写补表）
     await DatabaseInitializer.InitializeAsync(db, app.Logger);
+
+    // 内置内容（表单模板 + 提取规则）随版本升级，用户自建的内容不动
+    await BuiltInContentSeeder.SeedAsync(db, app.Logger);
 
     // 首次部署引导：Users 表为空时创建本地超管。
     // 必须有这个逃生舱——ACL 配错导致全员无权限时，仍要有人能进去修。

@@ -24,3 +24,6 @@ public sealed class ExtensionNotAllowedException(string extension)
 
 /// <summary>运行环境不支持该操作（例如在非 Windows 主机上访问 UNC）。</summary>
 public sealed class PlatformUnsupportedException(string message) : PlatformNotSupportedException(message);
+
+/// <summary>提取规则内容非法（JSON 结构错、正则编译失败、目标字段缺失等）。</summary>
+public sealed class InvalidRuleException(string message) : ArgumentException(message);

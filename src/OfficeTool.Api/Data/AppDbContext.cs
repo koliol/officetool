@@ -32,6 +32,20 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
 
+    // ── ELN（表单模板 / 记录 / 规则 / 解析审计）─────────────────────────
+
+    public DbSet<FormTemplate> FormTemplates => Set<FormTemplate>();
+
+    public DbSet<FormRecord> FormRecords => Set<FormRecord>();
+
+    public DbSet<RecordFile> RecordFiles => Set<RecordFile>();
+
+    public DbSet<ExtractionRuleDefinition> ExtractionRuleDefinitions => Set<ExtractionRuleDefinition>();
+
+    public DbSet<ExtractionRuleScope> ExtractionRuleScopes => Set<ExtractionRuleScope>();
+
+    public DbSet<ExtractionRun> ExtractionRuns => Set<ExtractionRun>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Project>(entity =>
@@ -211,6 +225,143 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             // 既保证查找是 O(log n)，也杜绝两条令牌哈希相同导致身份串味。
             entity.HasIndex(x => x.TokenHash).IsUnique();
             entity.HasIndex(x => x.UserId);
+        });
+
+        // ── ELN ────────────────────────────────────────────────────────
+
+        modelBuilder.Entity<FormTemplate>(entity =>
+        {
+            entity.ToTable("FormTemplates");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Code).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Name).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Category).HasMaxLength(64);
+            entity.Property(x => x.Description).HasMaxLength(1000);
+            entity.Property(x => x.SchemaJson).IsRequired();
+            entity.Property(x => x.UpdatedBy).HasMaxLength(128);
+
+            // 模板编码是用户选择模板时唯一稳定的标识（名称会改、Id 会变）
+            entity.HasIndex(x => x.Code).IsUnique();
+            entity.HasIndex(x => new { x.IsEnabled, x.Category });
+        });
+
+        modelBuilder.Entity<FormRecord>(entity =>
+        {
+            entity.ToTable("FormRecords");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.TemplateCode).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.TemplateName).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RecordNo).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Title).HasMaxLength(200);
+            entity.Property(x => x.DataJson).IsRequired();
+            entity.Property(x => x.TemplateSchemaJson).IsRequired();
+            entity.Property(x => x.CreatedBy).HasMaxLength(128);
+            entity.Property(x => x.UpdatedBy).HasMaxLength(128);
+            entity.Property(x => x.SubmittedBy).HasMaxLength(128);
+            entity.Property(x => x.VoidReason).HasMaxLength(500);
+
+            // 记录号唯一：并发下靠它兜底（生成逻辑见 FormRecordService）
+            entity.HasIndex(x => x.RecordNo).IsUnique();
+
+            // 列表默认按 项目+检项+状态 过滤、按时间倒序
+            entity.HasIndex(x => new { x.CheckId, x.Status, x.CreatedAt });
+
+            // 模板不允许级联删除记录：模板"停用"就够了，删模板会把历史记录一起带走
+            entity.HasOne(x => x.Template)
+                .WithMany()
+                .HasForeignKey(x => x.TemplateId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(x => x.Project)
+                .WithMany()
+                .HasForeignKey(x => x.ProjectId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(x => x.Check)
+                .WithMany()
+                .HasForeignKey(x => x.CheckId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<RecordFile>(entity =>
+        {
+            entity.ToTable("RecordFiles");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.FileName).HasMaxLength(260).IsRequired();
+            entity.Property(x => x.RelativePath).HasMaxLength(1024).IsRequired();
+            entity.Property(x => x.Extension).HasMaxLength(16);
+            entity.Property(x => x.ContentType).HasMaxLength(128);
+            entity.Property(x => x.UploadedBy).HasMaxLength(128);
+
+            entity.HasOne(x => x.Record)
+                .WithMany(x => x.Files)
+                .HasForeignKey(x => x.RecordId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => x.RecordId);
+        });
+
+        modelBuilder.Entity<ExtractionRuleDefinition>(entity =>
+        {
+            entity.ToTable("ExtractionRuleDefinitions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Code).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Name).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Category).HasMaxLength(64);
+            entity.Property(x => x.Description).HasMaxLength(1000);
+            entity.Property(x => x.RuleJson).IsRequired();
+            entity.Property(x => x.UpdatedBy).HasMaxLength(128);
+
+            entity.HasIndex(x => x.Code).IsUnique();
+        });
+
+        modelBuilder.Entity<ExtractionRuleScope>(entity =>
+        {
+            entity.ToTable("ExtractionRuleScopes");
+            entity.HasKey(x => x.Id);
+
+            entity.HasOne(x => x.Rule)
+                .WithMany(x => x.Scopes)
+                .HasForeignKey(x => x.RuleId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(x => x.Project)
+                .WithMany()
+                .HasForeignKey(x => x.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(x => x.Check)
+                .WithMany()
+                .HasForeignKey(x => x.CheckId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => new { x.RuleId, x.ProjectId, x.CheckId }).IsUnique();
+
+            // 与 AclEntry 同一个坑：SQL 里 NULL 互不相等，三列唯一索引对
+            // 项目级范围（CheckId IS NULL）不生效，必须补一条过滤唯一索引。
+            entity.HasIndex(x => new { x.RuleId, x.ProjectId })
+                .IsUnique()
+                .HasFilter("\"CheckId\" IS NULL")
+                .HasDatabaseName("IX_ExtractionRuleScopes_Rule_Project_ProjectWide");
+
+            entity.HasIndex(x => x.CheckId);
+        });
+
+        modelBuilder.Entity<ExtractionRun>(entity =>
+        {
+            entity.ToTable("ExtractionRuns");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.RuleCode).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.SourceFileName).HasMaxLength(260);
+            entity.Property(x => x.CreatedBy).HasMaxLength(128);
+            entity.Property(x => x.ErrorMessage).HasMaxLength(1000);
+
+            entity.HasOne<FormRecord>()
+                .WithMany()
+                .HasForeignKey(x => x.RecordId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => x.RecordId);
         });
     }
 }
