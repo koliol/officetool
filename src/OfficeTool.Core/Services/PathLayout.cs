@@ -1,3 +1,4 @@
+using System.Text;
 using OfficeTool.Core.Options;
 
 namespace OfficeTool.Core.Services;
@@ -81,12 +82,69 @@ public sealed class PathLayout(StorageOptions storageOptions)
     public string TrashRelativePath(string kind, DateTime deletedAt, string fileName) =>
         PathGuard.ToRelative(TrashRoot, Path.Combine(TrashKindDirectory(kind, deletedAt), fileName));
 
-    /// <summary>把业务相对路径转成回收站里的唯一文件名，避免跨项目/检项同名冲突。</summary>
+    /// <summary>
+    /// 把业务相对路径转成回收站里的唯一文件名，避免跨项目/检项同名冲突。
+    ///
+    /// 名字里带着原路径 + GUID 前缀，很容易超过单个路径段 255 字节的上限：
+    /// 项目 64 + 检项 64 + 文件名 200（汉字还要 ×3）+ 32 位 GUID，一算就爆。
+    /// 一旦爆了，删除动作会在 MoveFile 阶段失败，用户看到的是 502 而不是「名字太长」。
+    /// 所以这里按字节预算截断：**保留 GUID 前缀与扩展名**，只收缩中间那一段 ——
+    /// 扩展名丢了文件就再也认不回来，而中间那段只是给人看的线索。
+    /// </summary>
     public static string BuildTrashFileName(string originalRelativePath, string fileName)
     {
-        var safe = originalRelativePath.Replace('\\', '_').Replace('/', '_');
-        return $"{Guid.NewGuid():N}_{safe}";
+        var prefix = Guid.NewGuid().ToString("N");
+        var extension = Path.GetExtension(fileName);
+
+        // 拆成「目录线索」+「文件名」两段：目录（项目/检项）是 ASCII 编码、长度可控，
+        // 真正可能爆掉的是用户自己起的文件名，所以只截断后者，并把扩展名完整保留。
+        var segments = originalRelativePath.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+        var folder = segments.Length > 1 ? string.Join('_', segments[..^1]) : string.Empty;
+        var baseName = Path.GetFileNameWithoutExtension(fileName);
+        if (string.IsNullOrEmpty(baseName))
+        {
+            baseName = "file";
+        }
+
+        var fixedBytes = prefix.Length
+                         + 1
+                         + Encoding.UTF8.GetByteCount(extension)
+                         + (folder.Length > 0 ? Encoding.UTF8.GetByteCount(folder) + 1 : 0);
+
+        var budget = Math.Max(8, NameValidator.MaxSegmentBytes - fixedBytes);
+        baseName = TruncateToUtf8Bytes(baseName, budget);
+
+        var middle = folder.Length > 0 ? $"{folder}_{baseName}" : baseName;
+        return $"{prefix}_{middle}{extension}";
     }
+
+    /// <summary>
+    /// 按 UTF-8 字节数截断，且不切断代理对（否则会留下半个字符，Windows 上直接抛异常）。
+    /// </summary>
+    private static string TruncateToUtf8Bytes(string value, int maxBytes)
+    {
+        if (Encoding.UTF8.GetByteCount(value) <= maxBytes)
+        {
+            return value;
+        }
+
+        var builder = new StringBuilder(value.Length);
+        var used = 0;
+
+        foreach (var rune in value.EnumerateRunes())
+        {
+            if (used + rune.Utf8SequenceLength > maxBytes)
+            {
+                break;
+            }
+
+            builder.Append(rune.ToString());
+            used += rune.Utf8SequenceLength;
+        }
+
+        return builder.ToString();
+    }
+
 
     private static string[] BuildSegments(string? project, string? check)
     {

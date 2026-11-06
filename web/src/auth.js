@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { authApi, setUnauthorizedHandler } from './api'
 import { navigate } from './router'
+import { useAppStore } from './store'
+import { resetNoticeMemory } from './ui/notices'
 
 /**
  * 权限等级。与后端 `AccessLevel` 一一对应，**递进**语义：
@@ -52,6 +54,26 @@ export function scopeKey(project, check) {
 
 /** 本项目内「上一轮域认证是否已尝试过」。用于在登录页解释失败原因，避免跳转死循环。 */
 const SSO_TRIED_KEY = 'officetool.ssoTried'
+
+/**
+ * 清空「上一个账号留下的工作区」。
+ *
+ * 只重置 auth store 是不够的：项目树、当前选中的项目/检项、配置、数据版本号
+ * 都在 app store 里。换账号后左侧仍显示上一个人的项目目录 —— 既是信息泄露面，
+ * 也会让新用户点什么都 403/404，还得手动刷新一次才正常。
+ *
+ * 这里只在**本地**清，不发请求：调用方要么刚成功退出，要么已经被 401 拒绝。
+ */
+function resetWorkspace() {
+  try {
+    useAppStore().$reset()
+  } catch {
+    // pinia 尚未安装（极早期失败）时忽略
+  }
+
+  // 上一个账号关掉的提示不该替新用户做主
+  resetNoticeMemory()
+}
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -210,6 +232,7 @@ export const useAuthStore = defineStore('auth', {
         // 否则退出后仍按旧权限渲染，看起来像「退出没生效」
         this.$reset()
         this.ready = true
+        resetWorkspace()
       }
     },
 
@@ -310,7 +333,16 @@ export function installAuthGuards() {
     if (!auth.ready) {
       return
     }
+
+    // 鉴权关闭（内网可信形态）下没有任何登录流程，401 只代表「这个接口在该形态下不可用」。
+    // 此时把人踢到登录页，会出现"服务端未启用鉴权，请点进入系统"的荒谬画面。
+    if (!auth.authEnabled) {
+      return
+    }
+
     auth.authenticated = false
+    // 会话失效同样要清工作区：否则登录页回来后，旧账号的项目树还挂在那儿
+    resetWorkspace()
     navigate('/login', { replace: true })
   })
 }

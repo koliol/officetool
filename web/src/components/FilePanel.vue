@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { ElMessage } from '../ui/message'
 import {
   documentApi,
   projectApi,
@@ -449,57 +450,68 @@ defineOptions({ name: 'FilePanel' })
 </script>
 
 <template>
-  <div>
-    <el-form class="search-bar" :inline="true" label-width="70px" @submit.prevent>
-      <el-form-item label="项目">
-        <el-select
-          v-model="filters.project"
-          placeholder="全部"
-          clearable
-          style="width: 150px"
-          @change="onProjectFilterChange"
-        >
-          <el-option v-for="p in store.projects" :key="p.name" :label="p.name" :value="p.name" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="检项">
-        <el-select v-model="filters.check" placeholder="全部" clearable style="width: 130px" @change="onQuery">
-          <el-option v-for="c in checkOptions" :key="c.name" :label="c.name" :value="c.name" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="扩展名">
-        <el-select v-model="filters.extension" placeholder="全部" clearable style="width: 120px" @change="onQuery">
-          <el-option v-for="e in store.allowedExtensions" :key="e" :label="e" :value="e" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="时间范围">
+  <div class="file-panel" :aria-label="`${title}列表`">
+    <!--
+      筛选条：一行放完，标签改成输入框占位符。
+      原先用 label-width 的 inline form，四个 label 就吃掉 280px 横向空间，
+      1440 宽的屏幕上「查询」按钮被挤到第二行。
+    -->
+    <div class="filter-bar">
+      <el-select
+        v-model="filters.project"
+        placeholder="全部项目"
+        clearable
+        size="small"
+        class="w-140"
+        @change="onProjectFilterChange"
+      >
+        <el-option v-for="p in store.projects" :key="p.name" :label="p.name" :value="p.name" />
+      </el-select>
+
+      <el-select
+        v-model="filters.check"
+        placeholder="全部检项"
+        clearable
+        size="small"
+        class="w-120"
+        @change="onQuery"
+      >
+        <el-option v-for="c in checkOptions" :key="c.name" :label="c.name" :value="c.name" />
+      </el-select>
+
+      <el-select
+        v-model="filters.extension"
+        placeholder="全部类型"
+        clearable
+        size="small"
+        class="w-110"
+        @change="onQuery"
+      >
+        <el-option v-for="e in store.allowedExtensions" :key="e" :label="e" :value="e" />
+      </el-select>
+
+      <!--
+        日期区间必须套一层定宽容器：el-date-picker 的根宽由内部变量决定，
+        在 flex 行里要么被压缩、要么被内部样式顶掉，直接写 style 无效。
+      -->
+      <div class="date-field">
         <el-date-picker
           v-model="filters.dateRange"
           type="daterange"
           value-format="YYYY-MM-DDTHH:mm:ss"
-          start-placeholder="开始"
-          end-placeholder="结束"
-          style="width: 260px"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          size="small"
         />
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" @click="onQuery">查询</el-button>
-        <el-button @click="onReset">重置</el-button>
-      </el-form-item>
-    </el-form>
+      </div>
 
-    <div class="table-toolbar">
-      <span style="color: #606266">
-        <strong>{{ title }}列表</strong>
-        <el-tag size="small" type="info" style="margin-left: 8px">{{ scopeText }}</el-tag>
-      </span>
+      <!-- 查询是次要动作（筛选即刻生效），主色留给真正的主操作「上传模板」 -->
+      <el-button size="small" @click="onQuery">查询</el-button>
+      <el-button size="small" @click="onReset">重置</el-button>
 
-      <span v-if="filters.project || filters.check" style="margin-left: 8px">
-        <el-button link type="primary" size="small" @click="resetScope">返回全部</el-button>
-      </span>
+      <span class="flex-spacer" />
 
-      <span class="spacer" />
-
+      <!-- 主操作放右端，与"筛选"这类辅助动作分开，避免一排同级按钮里找重点 -->
       <el-upload
         v-if="isTemplates && showWriteColumns"
         :show-file-list="false"
@@ -507,148 +519,183 @@ defineOptions({ name: 'FilePanel' })
         :http-request="customUpload"
         accept=".docx,.xlsx,.pptx,.docm,.xlsm,.pptm"
       >
-        <el-button type="primary" :loading="uploading" :disabled="!canWriteScope">
+        <el-button type="primary" size="small" :loading="uploading" :disabled="!canWriteScope">
           <el-icon><Upload /></el-icon>&nbsp;上传模板
         </el-button>
       </el-upload>
 
       <el-button
         v-if="isTemplates && showDeleteAction"
+        size="small"
         :loading="syncing"
         @click="syncMetadata"
       >
-        <el-icon><Refresh /></el-icon>&nbsp;同步元数据
+        <el-icon><Refresh /></el-icon>&nbsp;同步
       </el-button>
 
-      <el-button @click="load">
+      <el-button size="small" @click="load">
         <el-icon><RefreshRight /></el-icon>&nbsp;刷新
       </el-button>
     </div>
 
-    <el-table
-      v-loading="loading"
-      :data="rows"
-      border
-      stripe
-      size="small"
-      @sort-change="onSortChange"
-    >
-      <el-table-column prop="fileName" label="文件名" min-width="160" sortable="custom" show-overflow-tooltip>
-        <template #default="{ row }">
-          <el-button link type="primary" @click="openFile(row)">{{ row.fileName }}</el-button>
-        </template>
-      </el-table-column>
-      <el-table-column prop="extension" label="类型" width="72" />
-      <el-table-column prop="size" label="大小" width="82" sortable="custom">
-        <template #default="{ row }">{{ formatSize(row.size) }}</template>
-      </el-table-column>
-      <el-table-column
-        :label="isTemplates ? '修改时间' : '创建时间'"
-        width="136"
-        sortable="custom"
-        prop="time"
+    <div v-if="filters.project || filters.check" class="scope-strip">
+      <span>当前范围：{{ filters.project || '全部项目' }}{{ filters.check ? ` / ${filters.check}` : '' }}</span>
+      <el-button link type="primary" size="small" @click="resetScope">查看全部</el-button>
+    </div>
+
+    <div class="file-panel__table">
+      <el-table
+        v-loading="loading"
+        :data="rows"
+        border
+        size="small"
+        height="100%"
+        @sort-change="onSortChange"
       >
-        <template #default="{ row }">{{ formatTime(isTemplates ? row.modifiedAt : row.createdAt) }}</template>
-      </el-table-column>
-      <el-table-column prop="project" label="项目" width="90" />
-      <el-table-column prop="check" label="检项" width="74" />
-
-      <!--
-        需求：新建文档不再埋在「更多」里 —— 独立成一列，按钮足够醒目。
-        整列在没有任何编辑权时隐藏：给只读用户摆一列全灰的按钮，
-        除了让他以为自己被针对之外没有用处。
-      -->
-      <el-table-column v-if="isTemplates && showWriteColumns" label="新建文档" width="102" fixed="right">
-        <template #default="{ row }">
-          <el-button
-            type="primary"
-            size="small"
-            :disabled="!canWriteRow(row)"
-            @click="createDocument(row)"
-          >
-            新建文档
-          </el-button>
+        <!--
+          空表不能只说「暂无数据」：常见情况是"当前范围确实没有文件"，
+          与"筛选选错了"看起来一模一样。这里把当前范围写出来，并给一个出口。
+        -->
+        <template #empty>
+          <div class="empty-state">
+            <el-icon :size="26"><Files /></el-icon>
+            <p class="empty-state__title">该范围下还没有{{ title }}</p>
+            <p class="empty-state__hint">
+              当前范围：{{ filters.project || '全部项目' }}{{ filters.check ? ` / ${filters.check}` : '' }}
+            </p>
+            <div class="empty-state__actions">
+              <el-button
+                v-if="filters.project || filters.check"
+                size="small"
+                @click="resetScope"
+              >
+                查看全部{{ title }}
+              </el-button>
+            </div>
+          </div>
         </template>
-      </el-table-column>
 
-      <!--
-        附件列在**两个列表都有**：装了桌面插件后点文件名会直接跳转协议、不再弹窗，
-        附件入口不能只挂在弹窗里（否则装了插件就再也传不了附件）。
-      -->
-      <el-table-column v-if="showWriteColumns" label="附件" width="102" fixed="right">
-        <template #default="{ row }">
-          <el-button size="small" :disabled="!canWriteRow(row)" @click="openAttachment(row)">
-            上传附件
-          </el-button>
-        </template>
-      </el-table-column>
+        <el-table-column prop="fileName" label="文件名" min-width="180" sortable="custom" show-overflow-tooltip>
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openFile(row)">{{ row.fileName }}</el-button>
+          </template>
+        </el-table-column>
+        <el-table-column prop="extension" label="类型" width="72" />
+        <el-table-column prop="size" label="大小" width="86" sortable="custom" align="right">
+          <template #default="{ row }">{{ formatSize(row.size) }}</template>
+        </el-table-column>
+        <el-table-column
+          :label="isTemplates ? '修改时间' : '创建时间'"
+          width="140"
+          sortable="custom"
+          prop="time"
+        >
+          <template #default="{ row }">{{ formatTime(isTemplates ? row.modifiedAt : row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column prop="project" label="项目" width="96" show-overflow-tooltip />
+        <el-table-column prop="check" label="检项" width="78" show-overflow-tooltip />
 
-      <el-table-column label="操作" :width="showDeleteAction ? 148 : 120" fixed="right">
-        <template #default="{ row }">
-          <!-- 详情弹窗永远可打开：路径、协议链接、上传附件入口都在里面 -->
-          <el-button link type="primary" size="small" @click="showDetail(row)">详情</el-button>
-          <el-dropdown trigger="click" @command="(cmd) => onRowAction(cmd, row)">
-            <el-button link type="primary" size="small">
-              更多<el-icon><ArrowDown /></el-icon>
+        <!--
+          需求：新建文档不再埋在「更多」里 —— 独立成一列，按钮足够醒目。
+          整列在没有任何编辑权时隐藏：给只读用户摆一列全灰的按钮，
+          除了让他以为自己被针对之外没有用处。
+        -->
+        <el-table-column v-if="isTemplates && showWriteColumns" label="新建文档" width="104" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="!canWriteRow(row)"
+              @click="createDocument(row)"
+            >
+              新建文档
             </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="copyPath">复制路径</el-dropdown-item>
+          </template>
+        </el-table-column>
 
-                <!--
-                  模板与文档现在都走「复制到…」：目标项目/检项由用户在弹窗里选，
-                  不再只能复制到当前文件夹。模板额外保留「原地复制一份」，
-                  因为做模板变体是高频操作，不该每次都走两段下拉选择。
-                -->
-                <el-dropdown-item
-                  v-if="showWriteColumns"
-                  :disabled="!canWriteRow(row)"
-                  command="copyTo"
-                >
-                  复制到…
-                </el-dropdown-item>
+        <!--
+          附件列在**两个列表都有**：装了桌面插件后点文件名会直接跳转协议、不再弹窗，
+          附件入口不能只挂在弹窗里（否则装了插件就再也传不了附件）。
+        -->
+        <el-table-column v-if="showWriteColumns" label="附件" width="96" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" :disabled="!canWriteRow(row)" @click="openAttachment(row)">
+              上传
+            </el-button>
+          </template>
+        </el-table-column>
 
-                <el-dropdown-item
-                  v-if="isTemplates && showWriteColumns"
-                  :disabled="!canWriteRow(row)"
-                  command="duplicate"
-                >
-                  原地复制一份
-                </el-dropdown-item>
+        <!-- 行操作统一收成一组：详情 / 更多 / 删除，宽度固定，不随行内容跳 -->
+        <el-table-column label="操作" :width="showDeleteAction ? 170 : 132" fixed="right">          <template #default="{ row }">
+            <div class="row-actions">
+              <!-- 详情弹窗永远可打开：路径、协议链接、上传附件入口都在里面 -->
+              <el-button link type="primary" size="small" @click="showDetail(row)">详情</el-button>
 
-                <el-dropdown-item
-                  v-if="showWriteColumns"
-                  :disabled="!canWriteRow(row)"
-                  divided
-                  command="rename"
-                >
-                  重命名
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+              <el-dropdown trigger="click" @command="(cmd) => onRowAction(cmd, row)">
+                <el-button link type="primary" size="small">
+                  更多<el-icon><ArrowDown /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="copyPath">复制路径</el-dropdown-item>
 
-          <el-button
-            v-if="showDeleteAction"
-            link
-            type="danger"
-            size="small"
-            :disabled="!canManageRow(row)"
-            @click="remove(row)"
-          >
-            删除
-          </el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+                    <!--
+                      模板与文档现在都走「复制到…」：目标项目/检项由用户在弹窗里选，
+                      不再只能复制到当前文件夹。模板额外保留「原地复制一份」，
+                      因为做模板变体是高频操作，不该每次都走两段下拉选择。
+                    -->
+                    <el-dropdown-item
+                      v-if="showWriteColumns"
+                      :disabled="!canWriteRow(row)"
+                      command="copyTo"
+                    >
+                      复制到…
+                    </el-dropdown-item>
 
-    <div style="margin-top: 14px; display: flex; justify-content: flex-end">
+                    <el-dropdown-item
+                      v-if="isTemplates && showWriteColumns"
+                      :disabled="!canWriteRow(row)"
+                      command="duplicate"
+                    >
+                      原地复制一份
+                    </el-dropdown-item>
+
+                    <el-dropdown-item
+                      v-if="showWriteColumns"
+                      :disabled="!canWriteRow(row)"
+                      divided
+                      command="rename"
+                    >
+                      重命名
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+
+              <el-button
+                v-if="showDeleteAction"
+                link
+                type="danger"
+                size="small"
+                :disabled="!canManageRow(row)"
+                @click="remove(row)"
+              >
+                删除
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <div class="file-panel__foot">
+      <span class="ot-faint">共 {{ total }} 条</span>
       <el-pagination
         v-model:current-page="filters.page"
         v-model:page-size="filters.pageSize"
         :total="total"
         :page-sizes="[20, 50, 100]"
-        layout="total, sizes, prev, pager, next"
+        layout="sizes, prev, pager, next"
         @current-change="load"
         @size-change="onQuery"
       />
@@ -674,3 +721,118 @@ defineOptions({ name: 'FilePanel' })
     />
   </div>
 </template>
+
+<style scoped>
+.file-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 16px 12px;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 0 8px;
+  flex: none;
+}
+
+/* flex 子项默认可收缩：日期区间控件会被压到 150px，两个日期框挤在一起。
+   除占位弹性块以外一律不收缩，放不下时整行换行，而不是把控件压扁。 */
+.filter-bar > *:not(.flex-spacer) {
+  flex: none;
+}
+
+.date-field {
+  width: 340px;
+  flex: none;
+}
+
+.date-field :deep(.el-date-editor) {
+  width: 100%;
+}
+
+.w-140 {
+  width: 140px;
+}
+
+.w-120 {
+  width: 120px;
+}
+
+.w-110 {
+  width: 110px;
+}
+
+.w-250 {
+  width: 250px;
+}
+
+.flex-spacer {
+  flex: 1;
+}
+
+/* 筛选生效时给一条窄提示，而不是让用户自己回想刚才选了什么 */
+.scope-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--ot-primary-soft);
+  color: var(--ot-primary-dark);
+  font-size: 12px;
+  font-weight: 600;
+  flex: none;
+}
+
+.file-panel__table {
+  flex: 1;
+  min-height: 0;
+}
+
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.file-panel__foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  font-size: 12px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 32px 0;
+  color: var(--ot-text-faint);
+}
+
+.empty-state__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ot-text-muted);
+}
+
+.empty-state__hint {
+  margin: 0;
+  font-size: 12px;
+}
+
+.empty-state__actions {
+  margin-top: 6px;
+}
+</style>

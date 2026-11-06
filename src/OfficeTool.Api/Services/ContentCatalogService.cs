@@ -116,6 +116,9 @@ public sealed class ContentCatalogService(
         };
 
         var rows = await ordered
+            // tie-break：同名/同大小/同一毫秒写入的行在 SQLite 里顺序不保证，
+            // 不加第二排序键时分页会出现「第 1 页和第 2 页都出现同一条、另一条谁也看不到」。
+            .ThenBy(x => x.t.Id)
             .Skip((q.Page - 1) * q.PageSize)
             .Take(q.PageSize)
             .ToListAsync(ct);
@@ -454,6 +457,8 @@ public sealed class ContentCatalogService(
         };
 
         var rows = await ordered
+            // 同模板列表：加第二排序键，避免分页抖动导致重复行与漏行
+            .ThenBy(x => x.d.Id)
             .Skip((q.Page - 1) * q.PageSize)
             .Take(q.PageSize)
             .ToListAsync(ct);

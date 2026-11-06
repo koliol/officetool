@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { ElMessage } from '../../ui/message'
 import { adminApi, projectApi } from '../../api'
 import { LEVEL_OPTIONS, levelName, levelTagType } from '../../auth'
 
@@ -191,7 +192,12 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="admin-view">
+  <div class="page admin-view">
+    <PageHeader
+      title="授权配置"
+      subtitle="把用户组授权到项目或检项；自检会指出「没有任何人能管理」的项目"
+    />
+
     <!-- 自检：把「最容易发生也最难发现」的问题摆在最上方 -->
     <template v-if="health">
       <el-alert
@@ -269,7 +275,7 @@ onMounted(load)
     </el-form>
 
     <div class="table-toolbar">
-      <span style="color: #606266">
+      <span style="color: var(--ot-text-muted)">
         <strong>授权条目</strong>
         <span class="count">共 {{ entries.length }} 条</span>
       </span>
@@ -332,7 +338,7 @@ onMounted(load)
       </el-table-column>
 
       <template #empty>
-        <span style="color: #909399">
+        <span style="color: var(--ot-text-faint)">
           还没有授权条目。点右上角「新增授权」把某个用户组授权到某个项目，该组成员登录后才能看到内容。
         </span>
       </template>
@@ -401,17 +407,17 @@ onMounted(load)
 
 .count {
   margin-left: 8px;
-  color: #909399;
+  color: var(--ot-text-faint);
   font-size: 12px;
 }
 
 .muted {
-  color: #909399;
+  color: var(--ot-text-faint);
   font-size: 12px;
 }
 
 .form-hint {
-  color: #909399;
+  color: var(--ot-text-faint);
   font-size: 12px;
 }
 

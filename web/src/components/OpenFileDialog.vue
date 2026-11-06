@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from '../ui/message'
 import { useAppStore } from '../store'
 import AttachmentDialog from './AttachmentDialog.vue'
 
@@ -70,10 +70,10 @@ function markInstalled() {
         <el-descriptions-item label="相对路径">{{ file.relativePath }}</el-descriptions-item>
       </el-descriptions>
 
-      <div style="margin-bottom: 6px; color: #606266; font-size: 13px">共享路径</div>
+      <div style="margin-bottom: 6px; color: var(--ot-text-muted); font-size: 13px">共享路径</div>
       <div class="unc-path">{{ file.accessPath }}</div>
 
-      <div style="margin-top: 10px; color: #909399; font-size: 12px">
+      <div style="margin-top: 10px; color: var(--ot-text-faint); font-size: 12px">
         协议链接：{{ protocolUrl }}
       </div>
     </template>

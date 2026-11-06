@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { ElMessage } from '../../ui/message'
 import { adminApi } from '../../api'
 import { useAuthStore, levelName, levelTagType } from '../../auth'
 
@@ -214,7 +215,12 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="admin-view">
+  <div class="page admin-view">
+    <PageHeader
+      title="用户管理"
+      subtitle="域账户首次 SSO 自动建档；停用或重置密码后，该账号的会话与令牌立即失效"
+    />
+
     <el-form class="search-bar" :inline="true" label-width="70px" @submit.prevent>
       <el-form-item label="搜索">
         <el-input
@@ -247,7 +253,7 @@ onMounted(load)
     </el-form>
 
     <div class="table-toolbar">
-      <span style="color: #606266">
+      <span style="color: var(--ot-text-muted)">
         <strong>用户</strong>
         <span class="count">共 {{ total }} 人</span>
       </span>
@@ -335,7 +341,7 @@ onMounted(load)
       </el-table-column>
 
       <template #empty>
-        <span style="color: #909399">没有匹配的用户。</span>
+        <span style="color: var(--ot-text-faint)">没有匹配的用户。</span>
       </template>
     </el-table>
 
@@ -479,7 +485,7 @@ onMounted(load)
             <el-table-column prop="grantedBy" label="授予来源" min-width="200" show-overflow-tooltip />
 
             <template #empty>
-              <span style="color: #909399">该用户目前看不到任何检项。</span>
+              <span style="color: var(--ot-text-faint)">该用户目前看不到任何检项。</span>
             </template>
           </el-table>
         </template>
@@ -498,7 +504,7 @@ onMounted(load)
 
 .count {
   margin-left: 8px;
-  color: #909399;
+  color: var(--ot-text-faint);
   font-size: 12px;
 }
 
@@ -508,7 +514,7 @@ onMounted(load)
 }
 
 .muted {
-  color: #c0c4cc;
+  color: var(--ot-text-faint);
   font-size: 12px;
 }
 
@@ -519,13 +525,13 @@ onMounted(load)
 }
 
 .field-label {
-  color: #606266;
+  color: var(--ot-text-muted);
   font-size: 13px;
   margin-bottom: 6px;
 }
 
 .form-hint {
-  color: #909399;
+  color: var(--ot-text-faint);
   font-size: 12px;
   margin-left: 10px;
 }

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { ElMessage } from '../../ui/message'
 import { adminApi } from '../../api'
 
 /**
@@ -172,11 +173,15 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="admin-view">
+  <div class="page admin-view">
+    <PageHeader
+      title="用户组"
+      subtitle="授权只能授给组；域组的成员以域同步为准，不能手工增删"
+    />
+
     <div class="table-toolbar">
-      <span style="color: #606266">
-        <strong>用户组</strong>
-        <span class="count">共 {{ groups.length }} 个组，{{ totalMembers }} 人次</span>
+      <span class="ot-muted count">
+        共 {{ groups.length }} 个组，{{ totalMembers }} 人次
       </span>
 
       <span class="spacer" />
@@ -246,7 +251,7 @@ onMounted(load)
       </el-table-column>
 
       <template #empty>
-        <span style="color: #909399">还没有任何用户组。授权前需要先建组。</span>
+        <span style="color: var(--ot-text-faint)">还没有任何用户组。授权前需要先建组。</span>
       </template>
     </el-table>
 
@@ -318,7 +323,7 @@ onMounted(load)
               <el-table-column prop="displayName" label="姓名" min-width="140" />
 
               <template #empty>
-                <span style="color: #909399">
+                <span style="color: var(--ot-text-faint)">
                   尚未同步到成员。成员名单会在该组内的人下次登录时自动建立。
                 </span>
               </template>
@@ -362,12 +367,12 @@ onMounted(load)
 
 .count {
   margin-left: 8px;
-  color: #909399;
+  color: var(--ot-text-faint);
   font-size: 12px;
 }
 
 .form-hint {
-  color: #909399;
+  color: var(--ot-text-faint);
   font-size: 12px;
 }
 

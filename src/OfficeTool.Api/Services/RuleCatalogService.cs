@@ -67,6 +67,8 @@ public sealed class RuleCatalogService(
         var notes = await LoadNotesAsync(project.Name, check.Name, ct);
 
         return _store.ListFiles(directory)
+            // Office 的 ~$ 锁文件与真身同扩展名，列出来就是一条点开 404 的假规则
+            .Where(f => !f.FileName.StartsWith("~$", StringComparison.Ordinal))
             .Where(f => IsAllowedExtension(f.Extension))
             .OrderBy(f => f.FileName, StringComparer.OrdinalIgnoreCase)
             .Select(f =>

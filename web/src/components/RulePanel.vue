@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { ElMessage } from '../ui/message'
 import { projectApi, ruleApi } from '../api'
 import { useAppStore } from '../store'
 import { useAuthStore, LEVELS } from '../auth'
@@ -294,42 +295,33 @@ defineOptions({ name: 'RulePanel' })
 </script>
 
 <template>
-  <div>
-    <el-form class="search-bar" :inline="true" label-width="70px" @submit.prevent>
-      <el-form-item label="项目">
-        <el-select
-          v-model="filters.project"
-          placeholder="全部"
-          clearable
-          style="width: 150px"
-          @change="onProjectChange"
-        >
-          <el-option v-for="p in store.projects" :key="p.name" :label="p.name" :value="p.name" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="检项">
-        <el-select
-          v-model="filters.check"
-          placeholder="全部"
-          clearable
-          style="width: 130px"
-          @change="load"
-        >
-          <el-option v-for="c in checkOptions" :key="c.name" :label="c.name" :value="c.name" />
-        </el-select>
-      </el-form-item>
-      <el-form-item>
-        <el-button @click="resetScope">返回全部</el-button>
-      </el-form-item>
-    </el-form>
+  <div class="rule-panel">
+    <div class="filter-bar">
+      <el-select
+        v-model="filters.project"
+        placeholder="全部项目"
+        clearable
+        size="small"
+        style="width: 140px"
+        @change="onProjectChange"
+      >
+        <el-option v-for="p in store.projects" :key="p.name" :label="p.name" :value="p.name" />
+      </el-select>
 
-    <div class="table-toolbar">
-      <span style="color: #606266">
-        <strong>提取规则列表</strong>
-        <el-tag size="small" type="info" style="margin-left: 8px">{{ scopeText }}</el-tag>
-      </span>
+      <el-select
+        v-model="filters.check"
+        placeholder="全部检项"
+        clearable
+        size="small"
+        style="width: 120px"
+        @change="load"
+      >
+        <el-option v-for="c in checkOptions" :key="c.name" :label="c.name" :value="c.name" />
+      </el-select>
 
-      <span class="spacer" />
+      <el-button size="small" @click="resetScope">返回全部</el-button>
+
+      <span class="flex-spacer" />
 
       <el-upload
         :show-file-list="false"
@@ -337,36 +329,38 @@ defineOptions({ name: 'RulePanel' })
         :http-request="customUpload"
         :disabled="!canRuleManage"
       >
-        <el-button type="primary" :loading="uploading" :disabled="!canRuleManage">
-          <el-icon><Upload /></el-icon>&nbsp;上传提取规则
+        <el-button type="primary" size="small" :loading="uploading" :disabled="!canRuleManage">
+          <el-icon><Upload /></el-icon>&nbsp;上传规则
         </el-button>
       </el-upload>
 
-      <el-button :disabled="!canRuleManage || !selectedNames.length" @click="openCopyDialog">
-        <el-icon><CopyDocument /></el-icon>&nbsp;复制到…<span v-if="selectedNames.length">（{{ selectedNames.length }}）</span>
+      <el-button
+        size="small"
+        :disabled="!canRuleManage || !selectedNames.length"
+        @click="openCopyDialog"
+      >
+        <el-icon><CopyDocument /></el-icon>&nbsp;复制到…
+        <span v-if="selectedNames.length">（{{ selectedNames.length }}）</span>
       </el-button>
 
-      <el-button @click="load">
+      <el-button size="small" @click="load">
         <el-icon><RefreshRight /></el-icon>&nbsp;刷新
       </el-button>
     </div>
 
-    <el-alert
-      v-if="deniedHint"
-      type="info"
-      :closable="false"
-      show-icon
-      :title="deniedHint"
-      description="提取规则按「项目 / 检项」两级存放，维护它需要该范围上的「规则管理」权限。"
-      style="margin-bottom: 10px"
-    />
+    <!-- 无维护权时用一条窄提示替代整块 el-alert：这里只是解释按钮为什么是灰的 -->
+    <div v-if="deniedHint" class="denied-strip">
+      <el-icon><InfoFilled /></el-icon>
+      <span>{{ deniedHint }}（维护规则需要该范围的「规则管理」权限）</span>
+    </div>
 
     <el-table
       v-loading="loading"
       :data="rows"
       border
-      stripe
       size="small"
+      height="100%"
+      class="rule-table"
       row-key="fileName"
       @selection-change="(v) => (selected = v)"
     >
@@ -420,7 +414,7 @@ defineOptions({ name: 'RulePanel' })
       </el-table-column>
 
       <template #empty>
-        <span style="color: #909399">
+        <span style="color: var(--ot-text-faint)">
           {{ canOperate ? '该文件夹下还没有提取规则，点右上角「上传提取规则」添加。' : '请先选择项目与检项。' }}
         </span>
       </template>
@@ -438,6 +432,51 @@ defineOptions({ name: 'RulePanel' })
 </template>
 
 <style scoped>
+.rule-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 16px 12px;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 0 8px;
+  flex: none;
+}
+
+/* 同 FilePanel：不让控件被 flex 压缩 */
+.filter-bar > *:not(.flex-spacer) {
+  flex: none;
+}
+
+.flex-spacer {
+  flex: 1;
+}
+
+.rule-table {
+  flex: 1;
+  min-height: 0;
+}
+
+.denied-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--ot-surface-2);
+  border: 1px solid var(--ot-border-soft);
+  color: var(--ot-text-muted);
+  font-size: 12px;
+  flex: none;
+}
+
 .note-cell {
   min-height: 22px;
   cursor: text;
@@ -446,16 +485,16 @@ defineOptions({ name: 'RulePanel' })
 }
 
 .note-cell:hover {
-  background: #f5f7fa;
-  outline: 1px dashed #dcdfe6;
+  background: var(--ot-surface-2);
+  outline: 1px dashed var(--ot-border);
 }
 
 .note-text {
-  color: #303133;
+  color: var(--ot-text);
 }
 
 .note-empty {
-  color: #c0c4cc;
+  color: var(--ot-text-faint);
   font-size: 12px;
 }
 </style>

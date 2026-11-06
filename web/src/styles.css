@@ -1,43 +1,159 @@
+/* ============================================================================
+   设计系统：高对比度商务风
+   ----------------------------------------------------------------------------
+   两条原则，其余都是它们的推论：
+   1. **对比度优先**：正文与背景至少 7:1（WCAG AAA），次要文字不低于 4.5:1。
+      办公软件的使用场景是长时间扫表格，灰底灰字省下来的那点"柔和"，
+      代价是每次都要凑近看。
+   2. **色只用于语义**：主色（深蓝）只出现在主操作与当前选中上；
+      成功/警告/危险各有专门色相。装饰性用色一律去掉，
+      让"哪里能点、哪里出错、哪里是当前所在"一眼可辨。
+   ============================================================================ */
+
+:root {
+  /* ── 品牌与语义色 ───────────────────────────────────────────── */
+  --ot-ink: #0b1b2b; /* 顶栏底色：接近墨黑的海军蓝 */
+  --ot-ink-2: #14304d; /* 顶栏悬停 */
+  --ot-primary: #1d4ed8;
+  --ot-primary-dark: #1a43b8;
+  --ot-primary-soft: #eaf1fd;
+  --ot-success: #047857;
+  --ot-warning: #b45309;
+  --ot-danger: #b91c1c;
+  --ot-info: #475569;
+
+  /* ── 中性色 ─────────────────────────────────────────────────── */
+  --ot-page: #eef2f7;
+  --ot-surface: #ffffff;
+  --ot-surface-2: #f1f5f9;
+  --ot-surface-3: #e2e8f0;
+  --ot-border: #cbd5e1;
+  --ot-border-soft: #e2e8f0;
+  --ot-text: #0f172a;
+  --ot-text-muted: #475569;
+  --ot-text-faint: #64748b;
+
+  --ot-radius: 8px;
+  --ot-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
+  --ot-shadow: 0 1px 3px rgba(15, 23, 42, 0.1), 0 1px 2px rgba(15, 23, 42, 0.06);
+  --ot-shadow-lg: 0 10px 24px rgba(15, 23, 42, 0.16);
+  --ot-header-height: 56px;
+
+  /* ── Element Plus 主题变量覆盖 ───────────────────────────────
+     只改这里，所有组件的配色一起变；不需要逐个组件写 :deep()。 */
+  --el-color-primary: #1d4ed8;
+  --el-color-primary-light-3: #4f7ce8;
+  --el-color-primary-light-5: #86a6ef;
+  --el-color-primary-light-7: #b9cdf5;
+  --el-color-primary-light-8: #d5e2f9;
+  --el-color-primary-light-9: #eaf1fd;
+  --el-color-primary-dark-2: #1a43b8;
+
+  --el-color-success: #047857;
+  --el-color-success-light-9: #e7f6f0;
+  --el-color-warning: #b45309;
+  --el-color-warning-light-9: #fdf1e3;
+  --el-color-danger: #b91c1c;
+  --el-color-danger-light-9: #fdeceb;
+  --el-color-error: #b91c1c;
+  --el-color-info: #475569;
+  --el-color-info-light-9: #eef2f7;
+
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #334155;
+  --el-text-color-secondary: #64748b;
+  --el-text-color-placeholder: #94a3b8;
+  --el-text-color-disabled: #94a3b8;
+
+  --el-border-color: #cbd5e1;
+  --el-border-color-light: #e2e8f0;
+  --el-border-color-lighter: #e8eef5;
+  --el-border-color-extra-light: #f1f5f9;
+
+  --el-fill-color: #f1f5f9;
+  --el-fill-color-light: #f5f8fc;
+  --el-fill-color-lighter: #f8fafc;
+  --el-fill-color-blank: #ffffff;
+
+  --el-border-radius-base: 6px;
+  --el-font-size-base: 14px;
+  --el-box-shadow-light: 0 1px 3px rgba(15, 23, 42, 0.12);
+
+  /* 日期区间选择器有内置宽度，直接在元素上写 style 会被它覆盖，
+     只能通过这个变量改；默认 350px 会把筛选条挤到换行。 */
+  --el-date-editor-daterange-width: 336px;
+}
+
 html,
 body,
 #app {
   height: 100%;
   margin: 0;
+}
+
+body {
   font-family: 'Microsoft YaHei', 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI',
     Roboto, sans-serif;
+  color: var(--ot-text);
+  background: var(--ot-page);
+  -webkit-font-smoothing: antialiased;
 }
+
+/* 表头与数字用等宽数字，列宽不会因为 8 与 1 的字形差异而抖 */
+.el-table,
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 外壳 ─────────────────────────────────────────────────────── */
 
 .app-shell {
   height: 100%;
   display: flex;
   flex-direction: column;
+  background: var(--ot-page);
 }
 
 .app-header {
   display: flex;
   align-items: center;
-  gap: 16px;
-  background: #1f2d3d;
-  color: #fff;
-  height: 56px;
+  gap: 20px;
+  height: var(--ot-header-height);
   padding: 0 20px;
+  background: var(--ot-ink);
+  border-bottom: 1px solid #071320;
+  color: #fff;
+  flex: none;
 }
 
 .app-header .brand {
-  font-size: 16px;
-  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
   white-space: nowrap;
 }
 
-.app-header .global-search {
-  max-width: 380px;
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--ot-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .app-header .header-right {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .app-body {
@@ -48,16 +164,16 @@ body,
   min-height: 0;
 }
 
-/*
-  各页面挂在 .app-body 之下。写成 flex 列容器而不是 height:100%：
-  页面上方可能还有若干条警告（初始化失败、权限加载失败），
-  用 height:100% 会把页面挤出可视区，底部永远看不到。
-*/
+/* 页面挂在 .app-body 下时用 flex 列，不要 height:100%：
+   上方若出现横幅，height:100% 会把底部挤出可视区。 */
 .app-view {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .app-view > * {
@@ -65,63 +181,318 @@ body,
   min-height: 0;
 }
 
-.app-aside {
-  border-right: 1px solid #e4e7ed;
-  background: #fafafa;
-  height: 100%;
-  overflow: auto;
-  padding: 12px;
-  box-sizing: border-box;
-}
+/* ── 面板：把"一块区域"画成一张卡片，边界比留白更省眼睛 ────────── */
 
-.aside-actions {
+.ot-panel {
+  background: var(--ot-surface);
+  border: 1px solid var(--ot-border-soft);
+  border-radius: var(--ot-radius);
+  box-shadow: var(--ot-shadow-sm);
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
+  flex-direction: column;
+  min-height: 0;
 }
 
-.aside-actions .el-button {
-  flex: 1;
-}
-
-.app-main {
-  padding: 16px;
-  height: 100%;
-  overflow: auto;
-  box-sizing: border-box;
-}
-
-.search-bar {
-  background: #fafafa;
-  border: 1px solid #ebeef5;
-  border-radius: 4px;
-  padding: 14px 16px 0;
-  margin-bottom: 14px;
-}
-
-.table-toolbar {
+.ot-panel__head {
   display: flex;
   align-items: center;
-  margin-bottom: 12px;
   gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ot-border-soft);
+  flex: none;
 }
 
-.table-toolbar .spacer {
-  margin-left: auto;
+.ot-panel__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ot-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ot-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+.ot-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 10px;
+  background: var(--ot-surface-3);
+  color: var(--ot-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* ── 通用工具 ─────────────────────────────────────────────────── */
+
+.ot-muted {
+  color: var(--ot-text-muted);
+}
+
+.ot-faint {
+  color: var(--ot-text-faint);
+}
+
+.ot-mono {
+  font-family: Consolas, 'SFMono-Regular', Monaco, monospace;
+}
+
+.empty-tip {
+  color: var(--ot-text-faint);
+  padding: 32px 0;
+  text-align: center;
+  font-size: 13px;
 }
 
 .unc-path {
   font-family: Consolas, Monaco, monospace;
   font-size: 12px;
   word-break: break-all;
-  background: #f5f7fa;
-  border-radius: 4px;
+  background: var(--ot-surface-2);
+  border-radius: 6px;
   padding: 8px 10px;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--ot-border-soft);
+  color: var(--ot-text);
 }
 
-.empty-tip {
-  color: #909399;
-  padding: 40px 0;
-  text-align: center;
+/* ── 列表页通用：筛选条与工具条 ───────────────────────────────────
+   规则页、回收站、令牌页与三个管理页共用这套结构，
+   集中在这里定义，各页面不必各写一份近似样式。 */
+
+.search-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: var(--ot-surface-2);
+  border: 1px solid var(--ot-border-soft);
+  border-radius: var(--ot-radius);
+}
+
+.search-bar .el-form-item {
+  margin: 0;
+}
+
+.search-bar .el-form-item__label {
+  font-weight: 600;
+  color: var(--ot-text-muted);
+}
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.table-toolbar .spacer {
+  margin-left: auto;
+}
+
+/* 页面容器：标题栏固定，内容区滚动。
+   所有一级页面都用 .page，保证"标题在同一个高度、内容从同一个位置开始"。 */
+.page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 页头：标题 + 范围面包屑 + 右侧动作 */.page-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 14px;
+  flex: none;
+}
+
+.page-head__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--ot-text);
+}
+
+.page-head__sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ot-text-muted);
+}
+
+.page-head__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 范围面包屑：当前在哪个项目/检项，必须在主区域一直可见 */
+.scope-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--ot-border);
+  background: var(--ot-surface);
+  font-size: 13px;
+  color: var(--ot-text);
+  font-weight: 600;
+}
+
+.scope-bar .scope-sep {
+  color: var(--ot-text-faint);
+  font-weight: 400;
+}
+
+.scope-bar .scope-tag {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ot-primary);
+  background: var(--ot-primary-soft);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.scope-bar.is-empty {
+  color: var(--ot-text-faint);
+  font-weight: 400;
+  border-style: dashed;
+}
+
+/* ── 表格 ─────────────────────────────────────────────────────── */
+
+.el-table {
+  --el-table-border-color: var(--ot-border-soft);
+  --el-table-header-bg-color: var(--ot-surface-2);
+  --el-table-header-text-color: #334155;
+  --el-table-row-hover-bg-color: var(--ot-primary-soft);
+  --el-table-text-color: var(--ot-text);
+}
+
+.el-table th.el-table__cell {
+  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 0.3px;
+}
+
+/* ── 按钮：主按钮实心、其余描边，点击层级一目了然 ───────────────── */
+
+.el-button {
+  font-weight: 600;
+}
+
+.el-button--primary {
+  --el-button-bg-color: var(--ot-primary);
+  --el-button-border-color: var(--ot-primary);
+  --el-button-hover-bg-color: var(--ot-primary-dark);
+  --el-button-hover-border-color: var(--ot-primary-dark);
+  --el-button-active-bg-color: #16389c;
+}
+
+/* ── 弹窗与标签页 ─────────────────────────────────────────────── */
+
+.el-dialog {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.el-dialog__header {
+  margin-right: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ot-border-soft);
+}
+
+.el-dialog__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ot-text);
+}
+
+.el-tabs__item {
+  font-weight: 600;
+  color: var(--ot-text-muted);
+}
+
+.el-tabs__item.is-active {
+  color: var(--ot-primary);
+}
+
+.el-tabs__active-bar {
+  height: 3px;
+  border-radius: 2px 2px 0 0;
+}
+
+.el-tabs__nav-wrap::after {
+  height: 1px;
+  background: var(--ot-border-soft);
+}
+
+/* ── 悬浮提示（ui/message.js）───────────────────────────────── */
+
+.ot-message {
+  border: 1px solid var(--ot-border) !important;
+  box-shadow: var(--ot-shadow-lg) !important;
+  border-radius: 8px !important;
+  min-width: 320px;
+}
+
+.ot-message .el-message__content {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.ot-message--error {
+  border-left: 4px solid var(--ot-danger) !important;
+}
+
+.ot-message--warning {
+  border-left: 4px solid var(--ot-warning) !important;
+}
+
+.ot-message--success {
+  border-left: 4px solid var(--ot-success) !important;
+}
+
+.ot-message--info {
+  border-left: 4px solid var(--ot-info) !important;
+}
+
+/* ── 滚动条：窄而可见，长表格里能看出还有多少内容 ───────────────── */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #b6c2d2 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #b6c2d2;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+  background-clip: content-box;
 }

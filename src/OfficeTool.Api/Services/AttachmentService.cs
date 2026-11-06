@@ -55,6 +55,9 @@ public sealed class AttachmentService(
         }
 
         return _store.ListFiles(directory)
+            // Word/Excel 打开文件时会在同目录留下 ~$xxx.docx 锁文件，扩展名与真身相同。
+            // 列出来只会得到一条点开就 404 的记录。
+            .Where(f => !f.FileName.StartsWith("~$", StringComparison.Ordinal))
             .Where(f => IsAllowedExtension(f.Extension))
             .OrderByDescending(f => f.ModifiedAt)
             .Select(f => ToDto(f, project.Name, check.Name))

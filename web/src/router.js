@@ -4,12 +4,10 @@ import { reactive } from 'vue'
  * 极简 hash 路由（零依赖）。
  *
  * 为什么不用 vue-router：
- *   1. 目标环境的终端安全策略**禁止执行 node.exe**，既装不了新依赖，
- *      也跑不了 vite build 验证。引入一个无法安装、无法验证的依赖，
- *      等于交付一份没人跑过的代码。
+ *   1. 页面只有十来个、没有嵌套路由，引入一个路由库换不来任何实际能力；
  *   2. hash 路由不需要服务端回退配置，Kestrel 只托管静态文件即可；
- *      群晖反向代理把应用挂在子路径（如 /officetool）下也不会失效。
- *   3. 本应用只有十来个页面，嵌套路由、懒加载、导航守卫这些能力都用不上。
+ *      群晖反向代理把应用挂在子路径（如 /officetool）下也不会失效；
+ *   3. 依赖越少，构建产物越小、升级面越窄（本项目已因终端安全策略踩过构建坑）。
  *
  * 接口形状刻意与 vue-router 对齐（`current.path` / `current.name` / `navigate()`），
  * 将来若确实需要嵌套路由或按需加载，替换成本很低。
@@ -76,7 +74,11 @@ function parseHash() {
 function apply() {
   const path = parseHash()
   const match = routes.find((r) => r.path === path)
-  const target = match || HOME
+
+  // 未知路径：**保留**用户输入的 path，交给 App.vue 渲染「页面不存在」。
+  // 原先直接回退到首页，地址栏显示 /xxx 而内容是工作台，`notFound` 也永远没人消费，
+  // 结果是一堆"点了没反应"的链接看起来像点击失效。
+  const target = match || { path, name: 'not-found', title: '页面不存在' }
 
   current.path = target.path
   current.name = target.name

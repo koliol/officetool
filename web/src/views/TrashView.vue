@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { ElMessage } from '../ui/message'
 import { trashApi } from '../api'
 import { useAuthStore, LEVELS } from '../auth'
 import { useAppStore } from '../store'
@@ -136,7 +137,12 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="trash-view">
+  <div class="page trash-view">
+    <PageHeader
+      title="回收站"
+      subtitle="删除的模板 / 文档 / 附件 / 规则先移到这里，可恢复或彻底删除"
+    />
+
     <el-form class="search-bar" :inline="true" label-width="70px" @submit.prevent>
       <el-form-item label="类型">
         <el-select v-model="filters.kind" placeholder="全部" clearable style="width: 140px" @change="onQuery">
@@ -195,7 +201,7 @@ onMounted(load)
       </el-table-column>
 
       <template #empty>
-        <span style="color: #909399">回收站是空的。</span>
+        <span style="color: var(--ot-text-faint)">回收站是空的。</span>
       </template>
     </el-table>
 

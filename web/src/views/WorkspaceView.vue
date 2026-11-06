@@ -1,14 +1,15 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, ref, watch } from 'vue'
+import { ElMessage } from '../ui/message'
 import { useAppStore } from '../store'
 import { useAuthStore } from '../auth'
+import { pushNotice } from '../ui/notices'
 import ProjectTree from '../components/ProjectTree.vue'
 import FilePanel from '../components/FilePanel.vue'
 import RulePanel from '../components/RulePanel.vue'
 
 /**
- * 文档工作台：左侧目录树 + 右侧模板/文档/规则列表。
+ * 文档工作台：左侧目录 + 右侧模板/文档/规则列表。
  *
  * 页面形态按**权限等级**自适应，而不是按写死的角色名：
  * 一线执行人员只有只读权时，看不到上传/新建/删除，也看不到提取规则页签；
@@ -20,10 +21,18 @@ const auth = useAuthStore()
 const activeTab = ref('templates')
 const keyword = ref('')
 
-const scopeText = computed(() => {
-  if (!store.currentProject) return '未选择项目'
-  if (!store.currentCheck) return `${store.currentProject}（全部检项）`
-  return `${store.currentProject} / ${store.currentCheck}`
+/** 当前范围：项目 / 检项 / 全部检项 —— 主区域顶部一直可见，避免"在改哪个目录"要靠猜 */
+const scope = computed(() => {
+  if (!store.currentProject) {
+    return { project: '', check: '', all: false, empty: true }
+  }
+
+  return {
+    project: store.currentProject,
+    check: store.currentCheck,
+    all: !store.currentCheck,
+    empty: false,
+  }
 })
 
 /**
@@ -36,7 +45,9 @@ const scopeText = computed(() => {
  */
 const showRulesTab = computed(() => auth.canAnyRuleManage)
 
-const searchPlaceholder = computed(() => `在${activeTab.value === 'rules' ? '提取规则' : '文件'}名中查找`)
+const searchPlaceholder = computed(
+  () => `在${activeTab.value === 'rules' ? '规则' : '文件'}名中查找`,
+)
 
 function onGlobalSearch() {
   if (!keyword.value) {
@@ -58,78 +69,103 @@ function downloadPlugin() {
   }
   window.open(url, '_blank')
 }
+
+/**
+ * 状态类提示改为悬浮通知（原先三条 el-alert 内联在页面顶部，
+ * 一进来就把列表往下顶，而且出现/消失时整页会跳）。
+ * 带 key：用户关掉后本次会话不再打扰，刷新或换账号会重新提示一次。
+ */
+function syncNotices() {
+  if (!store.pluginConfirmed) {
+    pushNotice({
+      key: 'plugin-missing',
+      type: 'info',
+      title: '未检测到桌面插件',
+      description:
+        '不装也能用：点击文件会给出共享路径，复制到资源管理器即可打开。装好后点击文件可直接唤起本机 Office。',
+      actionLabel: '本机已安装，标记一下',
+      onAction: togglePlugin,
+    })
+  }
+
+  if (auth.authEnabled && !auth.isSystemAdmin && auth.canAnyManage === false) {
+    pushNotice({
+      key: 'readonly-scope',
+      type: 'warning',
+      title: '当前为只读权限',
+      description: '可以浏览模板、生成文档、打开文件；上传、删除等入口要管理员授权后才会出现。',
+    })
+  }
+}
+
+watch(
+  () => [store.pluginConfirmed, auth.accessLoaded, auth.isSystemAdmin, auth.canAnyManage],
+  syncNotices,
+  { immediate: true },
+)
 </script>
 
 <template>
   <div class="workspace">
-    <div class="workspace-toolbar">
-      <el-input
-        v-model="keyword"
-        class="global-search"
-        :placeholder="searchPlaceholder"
-        clearable
-        @keyup.enter="onGlobalSearch"
-        @clear="onGlobalSearch"
-      >
-        <template #prefix>
-          <el-icon><Search /></el-icon>
-        </template>
-      </el-input>
+    <div class="page-head">
+      <div>
+        <h1 class="page-head__title">文档工作台</h1>
+        <p class="page-head__sub">模板复用 · 文档生成 · 提取规则维护</p>
+      </div>
 
-      <div class="toolbar-right">
+      <div class="scope-bar" :class="{ 'is-empty': scope.empty }">
+        <el-icon><FolderOpened /></el-icon>
+        <template v-if="scope.empty">未选择目录</template>
+        <template v-else>
+          <span>{{ scope.project }}</span>
+          <span class="scope-sep">/</span>
+          <span v-if="scope.check">{{ scope.check }}</span>
+          <span v-else class="scope-tag">全部检项</span>
+        </template>
+      </div>
+
+      <div class="page-head__actions">
+        <el-input
+          v-model="keyword"
+          class="global-search"
+          :placeholder="searchPlaceholder"
+          clearable
+          @keyup.enter="onGlobalSearch"
+          @clear="onGlobalSearch"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+
         <el-tag :type="store.pluginConfirmed ? 'success' : 'info'" size="small" effect="dark">
-          {{ store.pluginConfirmed ? '插件已安装' : '插件未标记' }}
+          {{ store.pluginConfirmed ? '插件已就绪' : '插件未标记' }}
         </el-tag>
-        <el-button size="small" @click="togglePlugin">
-          {{ store.pluginConfirmed ? '取消标记' : '标记已安装' }}
+
+        <el-button size="small" type="primary" plain @click="downloadPlugin">
+          <el-icon><Download /></el-icon>&nbsp;下载插件
         </el-button>
-        <el-button size="small" type="primary" plain @click="downloadPlugin">下载插件</el-button>
       </div>
     </div>
 
-    <el-alert
-      v-if="!store.pluginConfirmed"
-      type="info"
-      :closable="false"
-      show-icon
-      :title="store.pluginHint"
-      description="点击列表中的文件后，可复制共享路径到资源管理器打开；安装桌面插件后可直接唤起本机 Office。"
-      style="margin-bottom: 12px"
-    />
-
-    <!--
-      只读用户看到的界面到这里就结束了：没有上传、没有新建、没有删除。
-      这不是「藏起来」而是「不需要」——权限不足的按钮点了只会报 403，
-      对一线人员来说那是纯粹的噪音。
-    -->
-    <el-alert
-      v-if="auth.authEnabled && !auth.isSystemAdmin && auth.canAnyManage === false"
-      type="info"
-      :closable="false"
-      show-icon
-      title="你当前的权限为查看与生成文档"
-      description="可浏览模板、生成文档、打开文件；上传、删除等入口需要管理员授权后才会出现。"
-      style="margin-bottom: 12px"
-    />
-
     <div class="workspace-body">
-      <aside class="workspace-aside">
+      <aside class="workspace-aside ot-panel">
         <ProjectTree />
       </aside>
 
-      <main class="workspace-main">
+      <main class="workspace-main ot-panel">
         <el-tabs v-model="activeTab" class="file-tabs">
           <el-tab-pane label="模板列表" name="templates">
-            <FilePanel kind="templates" :keyword="keyword" :scope-text="scopeText" />
+            <FilePanel kind="templates" :keyword="keyword" :scope-text="scope.project" />
           </el-tab-pane>
 
           <el-tab-pane label="文档列表" name="documents">
-            <FilePanel kind="documents" :keyword="keyword" :scope-text="scopeText" />
+            <FilePanel kind="documents" :keyword="keyword" :scope-text="scope.project" />
           </el-tab-pane>
 
           <!-- 提取规则与模板/文档同一套「项目/检项」目录结构 -->
-          <el-tab-pane v-if="showRulesTab" label="提取规则列表" name="rules">
-            <RulePanel :keyword="keyword" :scope-text="scopeText" />
+          <el-tab-pane v-if="showRulesTab" label="提取规则" name="rules">
+            <RulePanel :keyword="keyword" :scope-text="scope.project" />
           </el-tab-pane>
         </el-tabs>
       </main>
@@ -142,48 +178,51 @@ function downloadPlugin() {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 12px 16px 0;
-  box-sizing: border-box;
-}
-
-.workspace-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.global-search {
-  max-width: 360px;
-}
-
-.toolbar-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  min-height: 0;
 }
 
 .workspace-body {
   flex: 1;
   display: flex;
+  gap: 14px;
   min-height: 0;
 }
 
 .workspace-aside {
-  width: 300px;
+  width: 316px;
   flex: none;
-  border-right: 1px solid #e4e7ed;
-  background: #fafafa;
-  overflow: auto;
-  padding: 12px;
-  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .workspace-main {
   flex: 1;
   min-width: 0;
-  padding: 0 0 12px 16px;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.global-search {
+  width: 260px;
+}
+
+/* 页签栏与面板留白对齐：让"卡片"内边距看起来一致 */
+.file-tabs {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-tabs :deep(.el-tabs__header) {
+  margin: 0;
+  padding: 0 16px;
+  flex: none;
+}
+
+.file-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+}
+
+.file-tabs :deep(.el-tab-pane) {
+  height: 100%;
 }
 </style>

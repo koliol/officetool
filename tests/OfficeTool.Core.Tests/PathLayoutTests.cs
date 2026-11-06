@@ -137,6 +137,30 @@ public class PathLayoutTests
         Assert.EndsWith("_QLS2409_SEC_a.docx", name);
         Assert.NotEqual("a.docx", name);
     }
+
+    /// <summary>
+    /// 回收站文件名必须落在单个路径段的 255 字节以内。
+    ///
+    /// 原名是「GUID + 完整相对路径」，项目 64 + 检项 64 + 文件名 200（汉字 ×3）
+    /// 轻松超过 255 字节 —— 一旦超了，删除动作会在 MoveFile 阶段失败，
+    /// 用户看到的是 502 而不是「文件名太长」。
+    /// </summary>
+    [Fact]
+    public void 超长中文文件名的回收站名字必须落在单段上限内且保留扩展名()
+    {
+        var project = new string('P', 64);
+        var check = new string('C', 64);
+        var fileName = new string('检', 80) + ".docx";   // 80 汉字 = 240 字节，加扩展名已接近上限
+
+        var name = PathLayout.BuildTrashFileName($"{project}\\{check}\\{fileName}", fileName);
+
+        Assert.True(
+            System.Text.Encoding.UTF8.GetByteCount(name) <= NameValidator.MaxSegmentBytes,
+            $"回收站文件名 {System.Text.Encoding.UTF8.GetByteCount(name)} 字节，超过上限");
+
+        Assert.EndsWith(".docx", name);
+        Assert.Contains(project, name);
+    }
 }
 
 /// <summary>容器内路径 → 客户端可访问路径（群晖部署的核心细节）。</summary>

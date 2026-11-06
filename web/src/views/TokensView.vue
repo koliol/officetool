@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { ElMessage } from '../ui/message'
 import { authApi } from '../api'
 
 /**
@@ -136,10 +137,15 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="token-view">
+  <div class="page token-view">
+    <PageHeader
+      title="访问令牌"
+      subtitle="给外部脚本与自动化任务用的长期凭据；浏览器登录不使用令牌"
+    />
+
     <el-alert
       type="info"
-      :closable="false"
+      :closable="true"
       show-icon
       title="令牌是给外部工具 / 脚本用的"
       style="margin-bottom: 14px"
@@ -158,7 +164,7 @@ onMounted(load)
     </el-alert>
 
     <div class="table-toolbar">
-      <span style="color: #606266">
+      <span style="color: var(--ot-text-muted)">
         <strong>我的令牌</strong>
         <el-tag v-if="hasActive" type="success" size="small" style="margin-left: 8px">已配置</el-tag>
         <el-tag v-else type="info" size="small" style="margin-left: 8px">尚未生成</el-tag>
@@ -200,7 +206,7 @@ onMounted(load)
       </el-table-column>
 
       <template #empty>
-        <span style="color: #909399">还没有令牌。需要脚本或外部工具访问接口时在这里生成。</span>
+        <span style="color: var(--ot-text-faint)">还没有令牌。需要脚本或外部工具访问接口时在这里生成。</span>
       </template>
     </el-table>
 
@@ -241,7 +247,7 @@ onMounted(load)
         style="margin-bottom: 14px"
       />
 
-      <div style="margin-bottom: 6px; color: #606266; font-size: 13px">
+      <div style="margin-bottom: 6px; color: var(--ot-text-muted); font-size: 13px">
         令牌（{{ issuedDialog.name }}）
       </div>
       <div class="unc-path">{{ issuedDialog.token }}</div>
@@ -263,13 +269,13 @@ onMounted(load)
 }
 
 .hint {
-  color: #909399;
+  color: var(--ot-text-faint);
   font-size: 12px;
   line-height: 1.7;
 }
 
 code {
-  background: #f5f7fa;
+  background: var(--ot-surface-2);
   padding: 1px 4px;
   border-radius: 3px;
   font-family: Consolas, Monaco, monospace;

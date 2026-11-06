@@ -1,6 +1,7 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { ElMessage } from '../ui/message'
 import { attachmentApi, ruleApi } from '../api'
 import { useAppStore } from '../store'
 import { useAuthStore, LEVELS } from '../auth'
@@ -283,7 +284,7 @@ function close() {
       <el-descriptions-item label="项目 / 检项">{{ scopeText }}</el-descriptions-item>
       <el-descriptions-item label="目标文档">
         <span v-if="targetDocument">{{ targetDocument.fileName }}</span>
-        <span v-else style="color: #e6a23c">未指定（提取需要先新建文档）</span>
+        <span v-else style="color: var(--ot-warning)">未指定（提取需要先新建文档）</span>
       </el-descriptions-item>
     </el-descriptions>
 
@@ -382,17 +383,17 @@ function close() {
 }
 
 .rule-label {
-  color: #606266;
+  color: var(--ot-text-muted);
   font-size: 13px;
 }
 
 .rule-desc {
-  color: #909399;
+  color: var(--ot-text-faint);
   font-size: 12px;
   margin-bottom: 10px;
 }
 
 .rule-desc.warn {
-  color: #e6a23c;
+  color: var(--ot-warning);
 }
 </style>

@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from '../ui/message'
 import { useAuthStore } from '../auth'
 import { navigate } from '../router'
 
@@ -67,8 +67,11 @@ async function retryDetect() {
   <div class="login-page">
     <div class="login-card">
       <div class="login-head">
-        <div class="login-title">Office 文档管理工具</div>
-        <div class="login-sub">模板与文档的统一管理入口</div>
+        <span class="brand-mark login-mark">OT</span>
+        <div>
+          <div class="login-title">Office 文档管理工具</div>
+          <div class="login-sub">模板与文档的统一管理入口</div>
+        </div>
       </div>
 
       <el-alert
@@ -147,37 +150,53 @@ async function retryDetect() {
 </template>
 
 <style scoped>
+/* 登录页是唯一"整屏深色"的页面：与顶栏同色，进来就知道自己在哪个系统里 */
 .login-page {
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #1f2d3d;
+  background: var(--ot-ink);
+  background-image: linear-gradient(160deg, #0b1b2b 0%, #12283f 55%, #0b1b2b 100%);
 }
 
 .login-card {
-  width: 400px;
+  width: 420px;
   background: #fff;
-  border-radius: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   padding: 32px 32px 24px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 
 .login-head {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--ot-border-soft);
+}
+
+.login-mark {
+  width: 38px;
+  height: 38px;
+  font-size: 15px;
+  border-radius: 9px;
+  flex: none;
 }
 
 .login-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: #1f2d3d;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--ot-text);
 }
 
 .login-sub {
-  margin-top: 6px;
-  font-size: 13px;
-  color: #909399;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--ot-text-faint);
 }
 
 .sso-button,
@@ -188,7 +207,7 @@ async function retryDetect() {
 .login-divider {
   display: flex;
   align-items: center;
-  color: #c0c4cc;
+  color: var(--ot-text-faint);
   font-size: 12px;
   margin: 20px 0 16px;
 }
@@ -198,7 +217,7 @@ async function retryDetect() {
   content: '';
   flex: 1;
   height: 1px;
-  background: #ebeef5;
+  background: var(--ot-border-soft);
 }
 
 .login-divider span {
@@ -208,8 +227,8 @@ async function retryDetect() {
 .login-foot {
   margin-top: 20px;
   font-size: 12px;
-  color: #a8abb2;
+  color: var(--ot-text-faint);
   text-align: center;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 </style>

@@ -34,6 +34,16 @@ export const useAppStore = defineStore('app', {
     async init() {
       this.config = await systemApi.config()
       await this.loadProjects()
+
+      // 首屏自动选中一个项目：否则进来是"未选择目录 + 一张混合了所有项目的表"，
+      // 用户既看不出当前在哪个目录，也得先点一下才有范围感。
+      // 优先选**有检项**的项目 —— 选到空项目就会停在"暂无数据"，
+      // 让人误以为系统里没有文件。只在"还没有选中项"时做，避免顶掉用户的选择。
+      const stillExists = this.projects.some((p) => p.name === this.currentProject)
+      if (!stillExists) {
+        const withChecks = this.projects.find((p) => (p.checks?.length || 0) > 0)
+        await this.selectProject((withChecks || this.projects[0])?.name || '')
+      }
     },
 
     async loadProjects() {

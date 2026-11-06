@@ -17,6 +17,49 @@ export function setUnauthorizedHandler(handler) {
   unauthorizedHandler = handler
 }
 
+/**
+ * 把 axios 的错误翻成能直接展示的中文。
+ *
+ * 后端的 ApiError 一定带 message，但**不是所有失败都来自后端**：
+ * 网关 502、Kestrel 拒绝的 413、断网导致的 ERR_NETWORK 都没有 JSON 响应体，
+ * 此时原先会退化成 "Request failed with status code 502" 这种英文，
+ * 用户看不懂，我们也无从判断是权限问题还是服务没起。
+ */
+function describeError(error, payload) {
+  if (payload?.message) {
+    return payload.message
+  }
+
+  const status = error.response?.status
+  const byStatus = {
+    400: '请求参数有误，请检查填写内容。',
+    401: '登录状态已失效，请重新登录。',
+    403: '没有执行该操作的权限，请联系管理员授权。',
+    404: '请求的资源不存在，可能已被他人删除。',
+    409: '操作与当前状态冲突，请刷新后重试。',
+    413: '文件超过服务端允许的大小上限。',
+    415: '服务端不支持该文件类型。',
+    500: '服务端处理失败，请查看服务端日志。',
+    502: '网关或共享存储不可用，请确认共享目录已挂载。',
+    503: '服务暂时不可用，请稍后重试。',
+    504: '服务响应超时，请稍后重试。',
+  }
+
+  if (status && byStatus[status]) {
+    return byStatus[status]
+  }
+
+  if (error.code === 'ERR_NETWORK') {
+    return '无法连接服务端，请检查网络或确认服务已启动。'
+  }
+
+  if (error.code === 'ECONNABORTED') {
+    return '请求超时，请稍后重试。'
+  }
+
+  return error.message || '请求失败'
+}
+
 // 统一把后端 ApiError 转成可直接展示的中文提示
 client.interceptors.response.use(
   (response) => response,
@@ -26,12 +69,16 @@ client.interceptors.response.use(
 
     error.status = status
     error.code = payload?.error || null
-    error.friendlyMessage = payload?.message || error.message || '请求失败'
+    error.friendlyMessage = describeError(error, payload)
 
-    // 认证接口自身的 401 是**预期结果**（还没登录），由调用方处理。
+    // 认证接口自身的 401 是**预期结果**（还没登录 / 会话来路不明），由调用方处理。
     // 若在这里也触发全局跳转，登录页会把自己踢走、形成死循环。
+    // 白名单刻意列全路径而不是 `/auth/` 一刀切：那样会把 /auth/change-password 的
+    // 401（会话过期）也吞掉，用户改完密码点提交后停在页面上，不知道发生了什么。
     const url = error.config?.url || ''
-    const isAuthEndpoint = url.startsWith('/auth/')
+    const isAuthEndpoint = ['/auth/me', '/auth/login', '/auth/sso', '/auth/logout'].some((path) =>
+      url.startsWith(path),
+    )
 
     if (status === 401 && !isAuthEndpoint && typeof unauthorizedHandler === 'function') {
       unauthorizedHandler()

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from '../ui/message'
 import { documentApi, ruleApi, templateApi } from '../api'
 import { useAppStore } from '../store'
 
@@ -176,7 +176,7 @@ async function submit() {
       <el-form-item label="要复制的">
         <div class="copy-files">
           <el-tag v-for="name in fileNames" :key="name" size="small" type="info">{{ name }}</el-tag>
-          <span v-if="!fileNames.length" style="color: #909399; font-size: 13px">未选择文件</span>
+          <span v-if="!fileNames.length" style="color: var(--ot-text-faint); font-size: 13px">未选择文件</span>
         </div>
       </el-form-item>
 
@@ -242,18 +242,18 @@ async function submit() {
 }
 
 .hint {
-  color: #909399;
+  color: var(--ot-text-faint);
   font-size: 12px;
   padding-left: 90px;
   line-height: 1.6;
 }
 
 .hint.warn {
-  color: #e6a23c;
+  color: var(--ot-warning);
 }
 
 code {
-  background: #f5f7fa;
+  background: var(--ot-surface-2);
   padding: 1px 4px;
   border-radius: 3px;
   font-family: Consolas, Monaco, monospace;

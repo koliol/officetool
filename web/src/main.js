@@ -9,12 +9,16 @@ import App from './App.vue'
 import './styles.css'
 import { startRouter } from './router'
 import { installAuthGuards } from './auth'
+import PageHeader from './components/PageHeader.vue'
 
 const app = createApp(App)
 
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
+
+// 页头在每个一级页面都要用，注册成全局组件省掉 5 处重复 import
+app.component('PageHeader', PageHeader)
 
 app.use(createPinia())
 

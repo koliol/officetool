@@ -12,6 +12,12 @@ public static partial class NameValidator
 
     public const int MaxFileNameLength = 200;
 
+    /// <summary>
+    /// 单个路径段（文件名）的字节上限。NTFS 与 ext4 都是 255 字节，
+    /// 但 NTFS 用户态 API 还额外受 255 个 UTF-16 字符限制，取更严的字节口径。
+    /// </summary>
+    public const int MaxSegmentBytes = 255;
+
     [GeneratedRegex(@"^[A-Za-z0-9_-]+$")]
     private static partial Regex CodePattern();
 
@@ -84,6 +90,17 @@ public static partial class NameValidator
         if (value.Length > MaxFileNameLength)
         {
             error = $"文件名长度不能超过 {MaxFileNameLength} 个字符。";
+            return false;
+        }
+
+        // 真正卡住上传的是**字节数**而不是字符数：NTFS/ext4 单个路径段上限 255 字节，
+        // 一个中文字符占 3 字节 —— 70 个汉字就已经超了，而按字符数校验会一路放行，
+        // 直到写文件时才失败（表现为删除/重命名链路 502，且错误信息与原因无关）。
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(value);
+        if (bytes > MaxSegmentBytes)
+        {
+            error = $"文件名过长：UTF-8 编码后 {bytes} 字节，超过单个路径段上限 {MaxSegmentBytes} 字节" +
+                    "（一个汉字按 3 字节计，约 85 个汉字即达上限）。";
             return false;
         }
 

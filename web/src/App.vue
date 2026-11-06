@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useAppStore } from './store'
 import { useAuthStore } from './auth'
 import { current, href, navigate } from './router'
+import { pushNotice } from './ui/notices'
 import LoginView from './views/LoginView.vue'
 import ForbiddenView from './views/ForbiddenView.vue'
 import WorkspaceView from './views/WorkspaceView.vue'
@@ -12,6 +13,7 @@ import AdminUsersView from './views/admin/UsersView.vue'
 import AdminGroupsView from './views/admin/GroupsView.vue'
 import AdminAclView from './views/admin/AclView.vue'
 import ChangePasswordDialog from './components/ChangePasswordDialog.vue'
+import NoticeStack from './components/NoticeStack.vue'
 
 const store = useAppStore()
 const auth = useAuthStore()
@@ -29,10 +31,13 @@ const navItems = computed(() => {
   const items = [
     { path: '/', label: '文档工作台' },
     { path: '/trash', label: '回收站', visible: auth.canAnyManage },
-    { path: '/me/tokens', label: '访问令牌' },
-    { path: '/admin/users', label: '用户管理', visible: auth.canAdmin },
-    { path: '/admin/groups', label: '用户组', visible: auth.canAdmin },
-    { path: '/admin/acl', label: '授权配置', visible: auth.canAdmin },
+
+    // 令牌是「没有浏览器登录态时」的身份通道：鉴权关闭时既不需要、接口也不可用，
+    // 留着只会让人点进去看到 401。管理三页同理 —— 那个形态下没有「用户」这个概念。
+    { path: '/me/tokens', label: '访问令牌', visible: auth.authEnabled },
+    { path: '/admin/users', label: '用户管理', visible: auth.authEnabled && auth.canAdmin },
+    { path: '/admin/groups', label: '用户组', visible: auth.authEnabled && auth.canAdmin },
+    { path: '/admin/acl', label: '授权配置', visible: auth.authEnabled && auth.canAdmin },
   ]
 
   return items.filter((item) => item.visible !== false)
@@ -55,6 +60,14 @@ async function ensureWorkspace() {
     await store.init()
   } catch (error) {
     initError.value = error.friendlyMessage || '工作区初始化失败'
+    pushNotice({
+      key: 'init-error',
+      type: 'error',
+      title: '工作区初始化失败',
+      description: `${initError.value}。项目与文件列表可能为空，可刷新重试。`,
+      actionLabel: '重新加载',
+      onAction: () => window.location.reload(),
+    })
   }
 }
 
@@ -63,6 +76,14 @@ onMounted(async () => {
     await auth.bootstrap()
   } catch (error) {
     initError.value = error.friendlyMessage || '无法连接到服务端'
+    pushNotice({
+      key: 'boot-error',
+      type: 'error',
+      title: '无法连接到服务端',
+      description: `${initError.value}。请确认服务已启动、网络可达，然后刷新页面。`,
+      actionLabel: '刷新',
+      onAction: () => window.location.reload(),
+    })
   }
 
   await ensureWorkspace()
@@ -87,6 +108,26 @@ watch(
       passwordDialog.value = true
     }
   },
+)
+
+// 权限表加载失败：按最小权限渲染 + 悬浮提示（不再用内联横幅把页面顶下去）
+watch(
+  () => auth.accessError,
+  (message) => {
+    if (!message) {
+      return
+    }
+
+    pushNotice({
+      key: 'access-error',
+      type: 'warning',
+      title: '未能加载权限信息',
+      description: `${message}。页面已按最小权限呈现，部分按钮不可见；刷新可重试。`,
+      actionLabel: '刷新',
+      onAction: () => window.location.reload(),
+    })
+  },
+  { immediate: true },
 )
 
 /**
@@ -116,6 +157,13 @@ watch(
       return
     }
 
+    // 鉴权关闭时，令牌页与三个管理页没有意义（后端会 401/409）：
+    // 直接回工作台，而不是把人送到一个只会报错的页面或"无权访问"。
+    if (!auth.authEnabled && (current.admin || current.path === '/me/tokens')) {
+      navigate('/', { replace: true })
+      return
+    }
+
     if (current.admin && !auth.canAdmin) {
       navigate('/forbidden', { replace: true })
     }
@@ -126,7 +174,7 @@ watch(
 
 <template>
   <div v-if="!auth.ready" class="boot">
-    <el-icon class="is-loading" :size="26"><Loading /></el-icon>
+    <el-icon class="is-loading" :size="24"><Loading /></el-icon>
     <span>正在加载…</span>
   </div>
 
@@ -134,7 +182,10 @@ watch(
 
   <div v-else class="app-shell">
     <header class="app-header">
-      <div class="brand">Office 文档管理工具</div>
+      <div class="brand">
+        <span class="brand-mark">OT</span>
+        <span>Office 文档管理</span>
+      </div>
 
       <!--
         用原生 <a> + hash 链接做导航：零额外依赖，右键「在新标签打开」也能用，
@@ -153,10 +204,8 @@ watch(
       </nav>
 
       <div class="header-right">
-        <el-tag v-if="!auth.authEnabled" type="warning" size="small" effect="dark">
-          鉴权未启用
-        </el-tag>
-        <el-tag v-else-if="auth.isAd" size="small" effect="plain">域账户</el-tag>
+        <span v-if="!auth.authEnabled" class="header-flag is-warn">鉴权未启用</span>
+        <span v-else-if="auth.isAd" class="header-flag">域账户</span>
 
         <el-dropdown trigger="click">
           <span class="user-chip">
@@ -179,25 +228,6 @@ watch(
     </header>
 
     <div class="app-body">
-      <el-alert
-        v-if="initError"
-        type="error"
-        :closable="false"
-        show-icon
-        :title="initError"
-        style="margin: 12px 16px 0"
-      />
-
-      <el-alert
-        v-if="auth.accessError"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="未能加载权限信息"
-        :description="`${auth.accessError}。页面已按最小权限呈现，部分按钮会不可见；刷新可重试。`"
-        style="margin: 12px 16px 0"
-      />
-
       <div class="app-view">
         <WorkspaceView v-if="view === '/'" />
 
@@ -226,6 +256,9 @@ watch(
       </div>
     </div>
 
+    <!-- 状态类提示：悬浮、可关闭、不占布局 -->
+    <NoticeStack />
+
     <ChangePasswordDialog v-model:visible="passwordDialog" :forced="auth.mustChangePassword" />
   </div>
 </template>
@@ -237,48 +270,80 @@ watch(
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: #909399;
+  color: var(--ot-text-muted);
 }
 
 .app-nav {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-left: 8px;
 }
 
 .nav-item {
-  color: #c0c4cc;
+  position: relative;
+  color: #cbd5e1;
   text-decoration: none;
-  font-size: 14px;
-  padding: 6px 12px;
-  border-radius: 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 6px;
   white-space: nowrap;
   transition: color 0.15s, background-color 0.15s;
 }
 
 .nav-item:hover {
   color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--ot-ink-2);
 }
 
+/* 当前页：白色文字 + 底部 2px 亮蓝短线，比"整块高亮"更容易和悬停区分 */
 .nav-item.is-active {
   color: #fff;
-  background: rgba(255, 255, 255, 0.16);
-  font-weight: 600;
+  background: var(--ot-ink-2);
+}
+
+.nav-item.is-active::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: #60a5fa;
+}
+
+.header-flag {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid #33506e;
+  color: #cbd5e1;
+}
+
+.header-flag.is-warn {
+  border-color: #b45309;
+  background: #7c2d12;
+  color: #fed7aa;
 }
 
 .user-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #dcdfe6;
+  color: #e2e8f0;
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   outline: none;
+  padding: 6px 10px;
+  border-radius: 6px;
 }
 
 .user-chip:hover {
   color: #fff;
+  background: var(--ot-ink-2);
 }
 </style>

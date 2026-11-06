@@ -71,6 +71,21 @@ public class NameValidatorTests
     }
 
     [Fact]
+    public void 文件名按字节数上限校验_中文不会因为字符数达标而放行()
+    {
+        // 100 个汉字 = 300 字节，字符数远没到 200 的上限，但字节数已超 255 ——
+        // 这种名字能过字符校验、却会在写盘时失败（删除/重命名链路表现为 502）
+        var tooLong = new string('检', 100) + ".docx";
+
+        Assert.False(NameValidator.TryValidateFileName(tooLong, out var error));
+        Assert.Contains("字节", error);
+
+        // 60 个汉字 = 180 字节 + 扩展名，仍在预算内
+        var ok = new string('检', 60) + ".docx";
+        Assert.True(NameValidator.TryValidateFileName(ok, out _));
+    }
+
+    [Fact]
     public void 扩展名白名单大小写不敏感_且非白名单被拒()
     {
         var allowed = new[] { ".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm" };
