@@ -7,11 +7,16 @@ import { pushNotice } from './ui/notices'
 import LoginView from './views/LoginView.vue'
 import ForbiddenView from './views/ForbiddenView.vue'
 import WorkspaceView from './views/WorkspaceView.vue'
+import RecordView from './views/RecordView.vue'
+import TemplatesView from './views/TemplatesView.vue'
+import TemplateEditorView from './views/TemplateEditorView.vue'
+import LegacyFilesView from './views/LegacyFilesView.vue'
 import TrashView from './views/TrashView.vue'
 import TokensView from './views/TokensView.vue'
 import AdminUsersView from './views/admin/UsersView.vue'
 import AdminGroupsView from './views/admin/GroupsView.vue'
 import AdminAclView from './views/admin/AclView.vue'
+import AdminRulesView from './views/admin/AdminRulesView.vue'
 import ChangePasswordDialog from './components/ChangePasswordDialog.vue'
 import NoticeStack from './components/NoticeStack.vue'
 
@@ -29,7 +34,9 @@ const passwordDialog = ref(false)
  */
 const navItems = computed(() => {
   const items = [
-    { path: '/', label: '文档工作台' },
+    { path: '/', label: '记录中心' },
+    { path: '/templates', label: '模板库' },
+    { path: '/legacy-files', label: '历史文件' },
     { path: '/trash', label: '回收站', visible: auth.canAnyManage },
 
     // 令牌是「没有浏览器登录态时」的身份通道：鉴权关闭时既不需要、接口也不可用，
@@ -38,6 +45,7 @@ const navItems = computed(() => {
     { path: '/admin/users', label: '用户管理', visible: auth.authEnabled && auth.canAdmin },
     { path: '/admin/groups', label: '用户组', visible: auth.authEnabled && auth.canAdmin },
     { path: '/admin/acl', label: '授权配置', visible: auth.authEnabled && auth.canAdmin },
+    { path: '/admin/rules', label: '提取规则', visible: auth.authEnabled && auth.canAdmin },
   ]
 
   return items.filter((item) => item.visible !== false)
@@ -203,7 +211,7 @@ watch(
     <header class="app-header">
       <div class="brand">
         <span class="brand-mark">OT</span>
-        <span>Office 文档管理</span>
+        <span>Office 检验记录（ELN）</span>
       </div>
 
       <!--
@@ -250,6 +258,14 @@ watch(
       <div class="app-view">
         <WorkspaceView v-if="view === '/'" />
 
+        <RecordView v-else-if="view === '/record'" />
+
+        <TemplatesView v-else-if="view === '/templates'" />
+
+        <TemplateEditorView v-else-if="view === '/template-editor'" />
+
+        <LegacyFilesView v-else-if="view === '/legacy-files'" />
+
         <TrashView v-else-if="view === '/trash'" />
 
         <TokensView v-else-if="view === '/me/tokens'" />
@@ -259,6 +275,8 @@ watch(
         <AdminGroupsView v-else-if="view === '/admin/groups'" />
 
         <AdminAclView v-else-if="view === '/admin/acl'" />
+
+        <AdminRulesView v-else-if="view === '/admin/rules'" />
 
         <ForbiddenView v-else-if="view === '/forbidden'" />
 

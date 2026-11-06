@@ -98,6 +98,57 @@ client.interceptors.response.use(
 
 export const api = client
 
+/**
+ * ELN（电子实验记录）：在线模板 / 记录 / PDF 解析。
+ *
+ * 与旧 templateApi/documentApi 的关系：旧的只读保留给「历史文件」页，
+ * 新的记录流程全走这里。
+ */
+export const elnApi = {
+  templates: {
+    list: (params) => client.get('/form-templates', { params }).then((r) => r.data),
+    get: (id) => client.get(`/form-templates/${id}`).then((r) => r.data),
+    create: (payload) => client.post('/form-templates', payload).then((r) => r.data),
+    update: (id, payload) => client.put(`/form-templates/${id}`, payload).then((r) => r.data),
+    setEnabled: (id, value) => client.post(`/form-templates/${id}/enabled?value=${value}`).then((r) => r.data),
+    copy: (id, payload) => client.post(`/form-templates/${id}/copy`, payload).then((r) => r.data),
+    remove: (id) => client.delete(`/form-templates/${id}`),
+  },
+
+  records: {
+    list: (params) => client.get('/form-records', { params }).then((r) => r.data),
+    get: (id) => client.get(`/form-records/${id}`).then((r) => r.data),
+    create: (payload) => client.post('/form-records', payload).then((r) => r.data),
+    saveDraft: (id, data) => client.put(`/form-records/${id}/data`, { data }).then((r) => r.data),
+    submit: (id) => client.post(`/form-records/${id}/submit`).then((r) => r.data),
+    void: (id, reason) => client.post(`/form-records/${id}/void`, { reason }).then((r) => r.data),
+    uploadFile: (id, file, onProgress) => {
+      const form = new FormData()
+      form.append('file', file)
+      return client
+        .post(`/form-records/${id}/files`, form, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: onProgress,
+        })
+        .then((r) => r.data)
+    },
+    removeFile: (id, fileId) => client.delete(`/form-records/${id}/files/${fileId}`),
+    rules: (id) => client.get(`/form-records/${id}/rules`).then((r) => r.data),
+    extract: (id, payload) => client.post(`/form-records/${id}/extract`, payload).then((r) => r.data),
+    runs: (id) => client.get(`/form-records/${id}/runs`).then((r) => r.data),
+  },
+
+  adminRules: {
+    list: () => client.get('/admin/extraction-rules').then((r) => r.data),
+    create: (payload) => client.post('/admin/extraction-rules', payload).then((r) => r.data),
+    update: (id, payload) => client.put(`/admin/extraction-rules/${id}`, payload).then((r) => r.data),
+    setEnabled: (id, value) =>
+      client.post(`/admin/extraction-rules/${id}/enabled?value=${value}`).then((r) => r.data),
+    replaceScopes: (id, scopes) =>
+      client.put(`/admin/extraction-rules/${id}/scopes`, { scopes }).then((r) => r.data),
+  },
+}
+
 export const systemApi = {
   config: () => client.get('/system/config').then((r) => r.data),
   sync: () => client.post('/system/sync').then((r) => r.data),
