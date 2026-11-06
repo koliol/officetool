@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { ElMessage } from '../../ui/message'
 import { adminApi } from '../../api'
+import { formatDate } from '../../ui/format'
 
 /**
  * 用户组。
@@ -24,12 +25,6 @@ const memberDrawer = reactive({ visible: false, loading: false, group: null, mem
 
 const totalMembers = computed(() => groups.value.reduce((sum, g) => sum + (g.memberCount || 0), 0))
 
-function formatTime(value) {
-  if (!value) return '-'
-  const d = new Date(value)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
 
 function isAdGroup(row) {
   return row.source === 'Ad'
@@ -231,7 +226,7 @@ onMounted(load)
       </el-table-column>
 
       <el-table-column label="创建时间" width="110">
-        <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+        <template #default="{ row }">{{ formatDate(row.createdAt, '未知') }}</template>
       </el-table-column>
 
       <el-table-column label="操作" width="212" fixed="right">

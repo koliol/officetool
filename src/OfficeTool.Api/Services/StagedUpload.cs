@@ -71,7 +71,7 @@ public static class StagedUpload
             // 声明大小可被伪造（甚至根本没发 Content-Length），以磁盘上的真实大小为准
             if (tempMeta.Size > maxSizeBytes)
             {
-                throw new BadRequestException(tooLargeMessage);
+                throw new PayloadTooLargeException(tooLargeMessage);
             }
 
             store.MoveFile(tempPath, fullPath, overwrite: false);

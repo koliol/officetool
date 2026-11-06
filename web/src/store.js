@@ -74,10 +74,6 @@ export const useAppStore = defineStore('app', {
       this.checks = projectName ? await projectApi.checks(projectName) : []
     },
 
-    selectCheck(name) {
-      this.currentCheck = name
-    },
-
     async loadChecks() {
       if (!this.currentProject) {
         this.checks = []
@@ -135,10 +131,5 @@ export const useAppStore = defineStore('app', {
 
     listTemplates: (params) => templateApi.list(params),
     listDocuments: (params) => documentApi.list(params),
-
-    /** 供左侧树按需展开时拉取检项 */
-    async listChecksFor(project) {
-      return await projectApi.checks(project)
-    },
   },
 })

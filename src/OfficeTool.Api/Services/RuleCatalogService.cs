@@ -96,7 +96,7 @@ public sealed class RuleCatalogService(
 
         if (declaredSize > _upload.MaxSizeBytes)
         {
-            throw new BadRequestException($"规则文件超过大小上限 {_upload.MaxSizeMB}MB。");
+            throw new PayloadTooLargeException($"规则文件超过大小上限 {_upload.MaxSizeMB}MB。");
         }
 
         var safeName = NameValidator.ValidateFileName(fileName);
@@ -130,7 +130,7 @@ public sealed class RuleCatalogService(
 
             return ToDto(meta, project.Name, check.Name, note: null);
         }
-        catch (Exception ex) when (ex is not ConflictException && ex is not BadRequestException)
+        catch (Exception ex) when (ex is not ConflictException && ex is not BadRequestException && ex is not PayloadTooLargeException)
         {
             await _logs.WriteFailureAsync("上传提取规则", $"{projectName}/{checkName}/{fileName}", ex, ct);
             throw;
@@ -342,11 +342,7 @@ public sealed class RuleCatalogService(
     }
 
     private bool IsAllowedExtension(string extension) =>
-        _upload.RuleExtensions.Any(
-            e => string.Equals(NormalizeExtension(e), NormalizeExtension(extension), StringComparison.OrdinalIgnoreCase));
-
-    private static string NormalizeExtension(string extension) =>
-        extension.StartsWith('.') ? extension : "." + extension;
+        FileExtensions.IsAllowed(extension, _upload.RuleExtensions);
 
     private RuleDto ToDto(FileMeta meta, string project, string check, RuleNoteView? note)
     {

@@ -58,7 +58,7 @@ public sealed class StagedUploadTests : IDisposable
         var target = Path.Combine(_root, "大文件.docx");
         using var content = new MemoryStream(new byte[2048]);
 
-        await Assert.ThrowsAsync<BadRequestException>(() => StagedUpload.WriteAsync(
+        await Assert.ThrowsAsync<PayloadTooLargeException>(() => StagedUpload.WriteAsync(
             _store, _root, target, content, maxSizeBytes: 1024, tooLargeMessage: "太大"));
 
         Assert.False(_store.FileExists(target));

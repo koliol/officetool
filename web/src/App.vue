@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useAppStore } from './store'
 import { useAuthStore } from './auth'
 import { current, href, navigate } from './router'
@@ -52,7 +52,9 @@ const view = computed(() => current.path)
  * 都要求已认证，未登录时打过去只会拿到 401。
  */
 async function ensureWorkspace() {
-  if (!auth.authenticated || store.config) {
+  // 强制改密期间服务端只放行 /api/auth/*，此时去拉项目树只会得到一串 409。
+  // 等改完密码（页面会重载）再加载数据。
+  if (!auth.authenticated || auth.mustChangePassword || store.config) {
     return
   }
 
@@ -93,6 +95,23 @@ onMounted(async () => {
   if (auth.authenticated && auth.mustChangePassword) {
     passwordDialog.value = true
   }
+})
+
+/**
+ * 服务端拒绝（409 must_change_password）时立刻弹出改密窗口。
+ *
+ * 只靠启动时的判断不够：管理员可以在会话中途把某人标记为"必须改密"，
+ * 也可以有人直接用带旧状态的页面继续操作 —— 那些请求都会被服务端拦下，
+ * 必须在第一次被拦时就告诉用户该做什么。
+ */
+function onMustChangePassword() {
+  auth.mustChangePassword = true
+  passwordDialog.value = true
+}
+
+window.addEventListener('officetool:must-change-password', onMustChangePassword)
+onUnmounted(() => {
+  window.removeEventListener('officetool:must-change-password', onMustChangePassword)
 })
 
 watch(

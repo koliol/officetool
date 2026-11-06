@@ -26,7 +26,6 @@ public sealed class RulesController(RuleCatalogService rules) : ControllerBase
         _rules.ListAsync(project, check, ct);
 
     [HttpPost("extraction-rules/upload")]
-    [RequestSizeLimit(200 * 1024 * 1024)]
     public async Task<ActionResult<RuleDto>> Upload(
         [FromForm] string project,
         [FromForm] string check,

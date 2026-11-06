@@ -75,16 +75,12 @@ public sealed record UserAccess(
                                            || (checkId is not null && LevelOf(checkId) > AccessLevel.None);
 
     /// <summary>
-    /// 规则 / 附件 / 回收站的可见性判定。
+    /// 是否需要对「按名称匹配」的资源（规则 / 附件 / 回收站）做过滤。
     ///
-    /// 这三类资源的实体里<strong>没有 ProjectId/CheckId 外键</strong>（只有路径或名称字符串），
-    /// 无法走 id 索引，只能按「项目名 + 检项名」匹配。这是既有建模的限制，
-    /// 数据量在几千条量级时无感知，若后续增长应给它们补外键。
+    /// 这三类资源的实体里**没有 ProjectId/CheckId 外键**（只有路径或名称字符串），
+    /// 无法走 id 索引，只能按 <see cref="ScopeKey"/> 拼出的键去匹配。
+    /// 调用方用 <see cref="AllowedScopes"/> 配合它做 SQL 侧过滤。
     /// </summary>
-    public bool IsScopeAllowed(string project, string check) =>
-        IsSystemAdmin || AllowedScopes.Contains(ScopeKey(project, check));
-
-    /// <summary>是否需要对上述按名称匹配的资源做过滤。</summary>
     public bool NeedsScopeFilter => !IsSystemAdmin;
 
     public static string ScopeKey(string project, string check) => $"{project}\u001f{check}";

@@ -47,6 +47,11 @@ namespace OfficeTool.Api.Data.Migrations
                     b.HasIndex("GroupId", "ProjectId", "CheckId")
                         .IsUnique();
 
+                    b.HasIndex("GroupId", "ProjectId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_AclEntries_Group_Project_ProjectWide")
+                        .HasFilter("\"CheckId\" IS NULL");
+
                     b.ToTable("AclEntries", (string)null);
                 });
 

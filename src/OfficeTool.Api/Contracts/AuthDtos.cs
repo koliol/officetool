@@ -22,32 +22,14 @@ public sealed class AuthMeDto
     public bool MustChangePassword { get; set; }
 }
 
-/// <summary>某个 项目/检项 上的有效权限，供前端按权限渲染按钮。</summary>
-public sealed class EffectiveRightsDto
-{
-    public bool Visible { get; set; }
-
-    /// <summary>
-    /// 有效等级名：<c>None</c> / <c>Read</c> / <c>Write</c> / <c>Manage</c> / <c>RuleManage</c>。
-    /// 递进语义，前端直接比较等级即可；下面四个 bool 是按同一等级展开的便捷值。
-    /// </summary>
-    public string Level { get; set; } = nameof(AccessLevel.None);
-
-    public bool CanRead { get; set; }
-
-    public bool CanWrite { get; set; }
-
-    public bool CanManage { get; set; }
-
-    public bool CanManageRules { get; set; }
-}
-
 public sealed class LoginRequest
 {
     public string UserName { get; set; } = string.Empty;
 
     public string Password { get; set; } = string.Empty;
-}public sealed class ChangePasswordRequest
+}
+
+public sealed class ChangePasswordRequest
 {
     public string OldPassword { get; set; } = string.Empty;
 

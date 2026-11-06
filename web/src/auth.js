@@ -111,7 +111,6 @@ export const useAuthStore = defineStore('auth', {
     /** 能否进管理后台。鉴权关闭时后端也放行，这里保持一致。 */
     canAdmin: (s) => !s.authEnabled || s.isSystemAdmin,
     /** 有没有任何一个可见检项 */
-    hasAnyScope: (s) => s.isSystemAdmin || Object.keys(s.levelByScope).length > 0,
     /** 至少有一个节点可编辑（决定左侧面板是否露出上传/新建等入口） */
     canAnyWrite: (s) =>
       s.isSystemAdmin || Object.values(s.levelByScope).some((v) => v >= LEVELS.Write),
@@ -291,14 +290,6 @@ export const useAuthStore = defineStore('auth', {
       return this.levelByScope[scopeKey(project, check)] ?? LEVELS.None
     },
 
-    /** 项目下可见节点的最高等级（用于「我还有没有能做的事」这类判断） */
-    levelOfProject(projectId) {
-      if (!this.authEnabled || this.isSystemAdmin) {
-        return LEVELS.RuleManage
-      }
-      return this.levelByProjectId[projectId] ?? LEVELS.None
-    },
-
     /**
      * 能否维护该项目的结构（新建/删除检项、删除项目）。
      *
@@ -313,19 +304,10 @@ export const useAuthStore = defineStore('auth', {
       const min = this.minLevelByProjectId[projectId]
       return typeof min === 'number' && min >= LEVELS.Manage
     },
-
-    /** 等级比较。`level` 传 LEVELS 里的值。 */
-    atLeast(actual, level) {
-      return actual >= level
-    },
   },
 })
 
 /**
- * 注册全局 401 出口。必须由 main.js 在 pinia 装好之后调用一次。
- *
- * 只在「已经进过一次应用」时跳登录页：否则启动阶段 /api/auth/me 的 401
- * 会在登录页自己把自己再跳一次，形成死循环。
  */
 export function installAuthGuards() {
   setUnauthorizedHandler(() => {

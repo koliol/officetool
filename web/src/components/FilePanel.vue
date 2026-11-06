@@ -13,6 +13,7 @@ import { useAuthStore, LEVELS } from '../auth'
 import OpenFileDialog from './OpenFileDialog.vue'
 import AttachmentDialog from './AttachmentDialog.vue'
 import CopyToDialog from './CopyToDialog.vue'
+import { formatSize, formatTime } from '../ui/format'
 
 const props = defineProps({
   kind: { type: String, required: true },
@@ -72,21 +73,7 @@ const showDeleteAction = computed(() => auth.canAnyManage)
 
 const checkOptions = ref([])
 
-function formatSize(bytes) {
-  if (bytes === null || bytes === undefined) return '-'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
-}
 
-function formatTime(value) {
-  if (!value) return '-'
-  const d = new Date(value)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
-    d.getMinutes(),
-  )}`
-}
 
 function buildParams() {
   const params = {
@@ -188,7 +175,16 @@ function showDetail(row) {
 
 async function onSortChange({ prop, order }) {
   if (!order) return
-  filters.sortBy = prop === 'fileName' ? 'name' : prop === 'size' ? 'size' : 'created'
+
+  // 时间列的语义随页签不同：模板展示「修改时间」，文档展示「创建时间」。
+  // 排序键必须与展示的那一列一致，否则点击表头排序的结果看起来是乱的。
+  filters.sortBy = prop === 'fileName'
+    ? 'name'
+    : prop === 'size'
+      ? 'size'
+      : isTemplates.value
+        ? 'modified'
+        : 'created'
   filters.sortDir = order === 'ascending' ? 'asc' : 'desc'
   filters.page = 1
   await load()

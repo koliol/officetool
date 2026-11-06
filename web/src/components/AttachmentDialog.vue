@@ -5,6 +5,7 @@ import { ElMessage } from '../ui/message'
 import { attachmentApi, ruleApi } from '../api'
 import { useAppStore } from '../store'
 import { useAuthStore, LEVELS } from '../auth'
+import { formatSize, formatTime } from '../ui/format'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -60,21 +61,7 @@ const selectedRule = computed(
   () => rules.value.find((r) => r.fileName === ruleFileName.value) || null,
 )
 
-function formatSize(bytes) {
-  if (bytes === null || bytes === undefined) return '-'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
-}
 
-function formatTime(value) {
-  if (!value) return '-'
-  const d = new Date(value)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
-    d.getMinutes(),
-  )}`
-}
 
 async function load() {
   if (!canOperate.value) {

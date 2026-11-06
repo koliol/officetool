@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { ElMessage } from '../ui/message'
 import { authApi } from '../api'
+import { formatTime } from '../ui/format'
 
 /**
  * 访问令牌（供外部工具 / 脚本使用）。
@@ -35,14 +36,6 @@ const EXPIRY_OPTIONS = [
 
 const hasActive = computed(() => tokens.value.some((t) => !t.isRevoked))
 
-function formatTime(value) {
-  if (!value) return '-'
-  const d = new Date(value)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
-    d.getMinutes(),
-  )}`
-}
 
 function statusOf(row) {
   if (row.isRevoked) {

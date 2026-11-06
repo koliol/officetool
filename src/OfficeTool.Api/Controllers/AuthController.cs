@@ -304,87 +304,12 @@ public sealed class AuthController(
     }
 
     /// <summary>
-    /// 查询当前用户在某个 项目/检项 上的有效权限，供前端按权限渲染按钮。
-    /// 前端<strong>只能据此决定显示与否</strong>——真正的拦截始终在服务端。
-    /// </summary>
-    [HttpGet("rights")]
-    public async Task<ActionResult<EffectiveRightsDto>> Rights(
-        [FromQuery] string project,
-        [FromQuery] string? check,
-        CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(project))
-        {
-            return BadRequest(new { error = "invalid_request", message = "project 不能为空。" });
-        }
-
-        var access = await _access.ResolveAsync(User, ct);
-
-        if (access.IsSystemAdmin)
-        {
-            return Ok(new EffectiveRightsDto
-            {
-                Visible = true,
-                Level = AccessLevel.RuleManage.ToString(),
-                CanRead = true,
-                CanWrite = true,
-                CanManage = true,
-                CanManageRules = true,
-            });
-        }
-
-        int? checkId = null;
-
-        if (!string.IsNullOrWhiteSpace(check))
-        {
-            checkId = await _db.Checks
-                .AsNoTracking()
-                .Where(c => c.Project!.Name == project && c.Name == check)
-                .Select(c => (int?)c.Id)
-                .FirstOrDefaultAsync(ct);
-        }
-        else
-        {
-            // 只给了项目：取该项目下任一检项有权限即视为项目可见
-            var ids = await _db.Checks
-                .AsNoTracking()
-                .Where(c => c.Project!.Name == project)
-                .Select(c => c.Id)
-                .ToListAsync(ct);
-
-            var visible = ids.Any(id => access.IsVisible(id));
-            var level = ids.Count == 0 ? AccessLevel.None : ids.Max(id => access.LevelOf(id));
-
-            return Ok(new EffectiveRightsDto
-            {
-                Visible = visible,
-                Level = level.ToString(),
-                CanRead = visible,
-                CanWrite = level >= AccessLevel.Write,
-                CanManage = level >= AccessLevel.Manage,
-                CanManageRules = level >= AccessLevel.RuleManage,
-            });
-        }
-
-        var effective = access.LevelOf(checkId);
-
-        return Ok(new EffectiveRightsDto
-        {
-            Visible = effective > AccessLevel.None,
-            Level = effective.ToString(),
-            CanRead = effective >= AccessLevel.Read,
-            CanWrite = effective >= AccessLevel.Write,
-            CanManage = effective >= AccessLevel.Manage,
-            CanManageRules = effective >= AccessLevel.RuleManage,
-        });
-    }
-
-    /// <summary>
     /// 当前用户在全部可见检项上的有效等级。前端<b>一次</b>拉全量，之后在内存里查表。
     ///
-    /// 为什么不复用 <c>/api/auth/rights</c>：那个是按 项目/检项 单点询问，
-    /// 左侧树有几十个节点，每次切范围都往返一次会明显卡顿。
-    /// 检项总量远小于文件数，整表载入可接受。
+    /// 为什么不做成「按 项目/检项 单点询问」：左侧树有几十个节点，
+    /// 每次切范围都往返一次会明显卡顿；而检项总量远小于文件数，整表载入可接受。
+    /// （早期的单点接口 <c>GET /api/auth/rights</c> 已随之删除，它只服务过前端，
+    /// 且前端一转到整表查询后就再没有调用方。）
     /// </summary>
     [HttpGet("rights/map")]
     public async Task<ActionResult<AccessMapDto>> RightsMap(CancellationToken ct)

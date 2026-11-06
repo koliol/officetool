@@ -41,7 +41,6 @@ public sealed class TemplatesController(ContentCatalogService content) : Control
             ct);
 
     [HttpPost("upload")]
-    [RequestSizeLimit(200 * 1024 * 1024)]
     public async Task<ActionResult<TemplateDto>> Upload(
         [FromForm] string project,
         [FromForm] string check,

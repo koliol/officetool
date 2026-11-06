@@ -68,8 +68,16 @@ client.interceptors.response.use(
     const payload = error.response?.data
 
     error.status = status
-    error.code = payload?.error || null
+    // 后端 ApiError 的字段名是 code（不是 error）。两种都认，兼容早期写的调用方。
+    error.code = payload?.code || payload?.error || null
     error.friendlyMessage = describeError(error, payload)
+
+    // 首次登录未改密：服务端会拦掉除 /api/auth/* 以外的请求。
+    // 这里广播一次，由 App.vue 立刻弹出改密窗口 —— 否则用户只会看到
+    // 一连串"操作失败"，不知道为什么什么都不让做。
+    if (error.code === 'must_change_password') {
+      window.dispatchEvent(new CustomEvent('officetool:must-change-password'))
+    }
 
     // 认证接口自身的 401 是**预期结果**（还没登录 / 会话来路不明），由调用方处理。
     // 若在这里也触发全局跳转，登录页会把自己踢走、形成死循环。
@@ -91,7 +99,6 @@ client.interceptors.response.use(
 export const api = client
 
 export const systemApi = {
-  health: () => client.get('/health').then((r) => r.data),
   config: () => client.get('/system/config').then((r) => r.data),
   sync: () => client.post('/system/sync').then((r) => r.data),
   logs: (params) => client.get('/logs', { params }).then((r) => r.data),
@@ -121,10 +128,6 @@ export const authApi = {
 
   /** 全部可见检项的有效等级。前端一次拉全，之后在内存里查表。 */
   accessMap: () => client.get('/auth/rights/map').then((r) => r.data),
-
-  /** 单个 项目/检项 的有效权限（按需查询，页面一般用 accessMap 的缓存） */
-  rights: (project, check) =>
-    client.get('/auth/rights', { params: { project, check } }).then((r) => r.data),
 
   /** 外部工具 / 脚本的访问令牌（桌面插件不需要）。明文只在创建响应里出现一次。 */
   tokens: {
@@ -248,7 +251,6 @@ export const ruleApi = {
 export const adminApi = {
   users: {
     list: (params) => client.get('/admin/users', { params }).then((r) => r.data),
-    get: (id) => client.get(`/admin/users/${id}`).then((r) => r.data),
     /** 响应里的明文密码**只出现这一次** */
     create: (payload) => client.post('/admin/users', payload).then((r) => r.data),
     update: (id, payload) => client.patch(`/admin/users/${id}`, payload).then((r) => r.data),
@@ -268,10 +270,6 @@ export const adminApi = {
     /** 整体覆盖成员。仅本地组可用 —— 域组的成员以域同步为准。 */
     setMembers: (id, userIds) =>
       client.put(`/admin/groups/${id}/members`, { userIds }).then((r) => r.data),
-    /** 域组禁用下面两个入口：手工加的人会被下次 SSO 同步冲掉 */
-    addMember: (id, userId) =>
-      client.post(`/admin/groups/${id}/members/${userId}`).then((r) => r.data),
-    removeMember: (id, userId) => client.delete(`/admin/groups/${id}/members/${userId}`),
   },
 
   acl: {

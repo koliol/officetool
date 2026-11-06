@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using OfficeTool.Api.Contracts;
 using OfficeTool.Api.Services;
 using OfficeTool.Core.Exceptions;
+using OfficeTool.Core.Options;
 
 namespace OfficeTool.Api.Middleware;
 
@@ -13,11 +14,13 @@ namespace OfficeTool.Api.Middleware;
 public sealed class ApiExceptionMiddleware(
     RequestDelegate next,
     ILogger<ApiExceptionMiddleware> logger,
-    IHostEnvironment environment)
+    IHostEnvironment environment,
+    UploadOptions uploadOptions)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IHostEnvironment _environment = environment;
+    private readonly UploadOptions _upload = uploadOptions;
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -51,11 +54,12 @@ public sealed class ApiExceptionMiddleware(
         }
     }
 
-    private static (int Status, string Code, string Message) Map(Exception ex) => ex switch
+    private (int Status, string Code, string Message) Map(Exception ex) => ex switch
     {
         NotFoundException => (StatusCodes.Status404NotFound, "not_found", ex.Message),
         ConflictException => (StatusCodes.Status409Conflict, "conflict", ex.Message),
         BadRequestException => (StatusCodes.Status400BadRequest, "bad_request", ex.Message),
+        PayloadTooLargeException => (StatusCodes.Status413PayloadTooLarge, "payload_too_large", ex.Message),
         AccessDeniedException => (StatusCodes.Status403Forbidden, "access_denied", ex.Message),
         FeatureNotAvailableException => (StatusCodes.Status501NotImplemented, "feature_not_available", ex.Message),
 
@@ -66,10 +70,23 @@ public sealed class ApiExceptionMiddleware(
         PlatformUnsupportedException => (StatusCodes.Status503ServiceUnavailable, "platform_unsupported", ex.Message),
 
         DbUpdateConcurrencyException => (StatusCodes.Status409Conflict, "concurrency_conflict", "数据已被其他操作修改，请重试。"),
+
+        // 请求体超限有两种来源，必须都落到 413：
+        //   · Kestrel 的 MaxRequestBodySize → BadHttpRequestException(413)
+        //   · 表单解析的多段长度上限 → InvalidDataException
+        // 否则前端拿到 500，只会以为"服务器坏了"，不会想到是文件太大。
+        BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge } =>
+            (StatusCodes.Status413PayloadTooLarge, "payload_too_large", UploadTooLargeMessage()),
+        InvalidDataException => (StatusCodes.Status413PayloadTooLarge, "payload_too_large", UploadTooLargeMessage()),
+
         IOException => (StatusCodes.Status502BadGateway, "storage_io_error", $"存储访问失败：{ex.Message}"),
         UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "forbidden", ex.Message),
         ArgumentException => (StatusCodes.Status400BadRequest, "invalid_argument", ex.Message),
 
         _ => (StatusCodes.Status500InternalServerError, "internal_error", "服务器内部错误。"),
     };
+
+    private string UploadTooLargeMessage() =>
+        $"上传内容超过服务端允许的大小上限（{_upload.MaxSizeMB}MB）。请压缩或拆分后再试，" +
+        "或联系管理员调整 Upload:MaxSizeMB。";
 }

@@ -38,7 +38,6 @@ public sealed class AttachmentsController(AttachmentService attachments) : Contr
         _attachments.ListAsync(project, check, ct);
 
     [HttpPost("attachments/upload")]
-    [RequestSizeLimit(200 * 1024 * 1024)]
     public async Task<ActionResult<AttachmentDto>> Upload(
         [FromForm] string project,
         [FromForm] string check,

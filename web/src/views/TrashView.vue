@@ -5,6 +5,7 @@ import { ElMessage } from '../ui/message'
 import { trashApi } from '../api'
 import { useAuthStore, LEVELS } from '../auth'
 import { useAppStore } from '../store'
+import { formatSize, formatTime } from '../ui/format'
 
 /**
  * 回收站。
@@ -37,21 +38,7 @@ function kindLabel(kind) {
   return found ? found.label : kind || '-'
 }
 
-function formatSize(bytes) {
-  if (bytes === null || bytes === undefined) return '-'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
-}
 
-function formatTime(value) {
-  if (!value) return '-'
-  const d = new Date(value)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
-    d.getMinutes(),
-  )}`
-}
 
 /** 该条目对应的 项目/检项 上有没有管理权 */
 function canManage(row) {

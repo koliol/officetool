@@ -88,18 +88,6 @@ public sealed class AdminService(
         return new PagedResult<UserDto>(await WithGroupsAsync(items, ct), total, page, pageSize);
     }
 
-    public async Task<UserDto> GetUserAsync(int id, CancellationToken ct = default)
-    {
-        await RequireAdminAsync(ct);
-
-        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct)
-                   ?? throw new NotFoundException($"用户不存在：{id}");
-
-        var groupNames = await LoadGroupsAsync([user.Id], ct);
-
-        return ToDto(user, groupNames.GetValueOrDefault(user.Id) ?? []);
-    }
-
     /// <summary>
     /// 创建本地账户，返回明文初始密码（唯一一次）。
     ///

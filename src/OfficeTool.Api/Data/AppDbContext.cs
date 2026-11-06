@@ -181,6 +181,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             // 同一 (组, 项目, 检项) 只允许一条，避免重复授权导致语义分裂
             entity.HasIndex(x => new { x.GroupId, x.ProjectId, x.CheckId }).IsUnique();
 
+            // 上面那条三列唯一索引对**项目级**授权（CheckId IS NULL）完全无效：
+            // SQL 标准里 NULL 互不相等，SQLite 也照此实现，于是同一个组可以对
+            // 同一个项目插入任意多条项目级授权。「这个人的权限是谁给的」就说不清了，
+            // 取消其中一条也不影响另一条 —— 这类重复在界面上看不出来，只能靠约束兜住。
+            // 用过滤索引精确表达「项目级条目在同一组+项目上唯一」。
+            entity.HasIndex(x => new { x.GroupId, x.ProjectId })
+                .IsUnique()
+                .HasFilter("\"CheckId\" IS NULL")
+                .HasDatabaseName("IX_AclEntries_Group_Project_ProjectWide");
+
             // 按检项反查授权是每次请求都要走的路径
             entity.HasIndex(x => x.CheckId);
             entity.HasIndex(x => x.ProjectId);

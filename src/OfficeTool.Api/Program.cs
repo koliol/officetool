@@ -62,7 +62,14 @@ builder.Services.Configure<FormOptions>(options =>
 });
 
 // ── 服务注册 ───────────────────────────────────────────────────────────
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    // 上传体积上限按配置统一施加（见 UploadSizeFilter 的说明）
+    options.Filters.Add<UploadSizeFilter>();
+});
+// 上传体积上限过滤器：AddControllers 里以 <T> 注册的类型由 DI 解析
+builder.Services.AddSingleton<UploadSizeFilter>();
+
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();
@@ -160,7 +167,11 @@ builder.Services
             {
                 context.RejectPrincipal();
                 await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                return;
             }
+
+            // 后面的强制改密中间件直接复用这次查询结果，不再重复查库
+            context.HttpContext.Items[RequestUserCache.Key] = user;
         };
     })
     .AddNegotiate(options =>
@@ -378,6 +389,10 @@ app.UseStaticFiles();
 // 认证/授权放在静态文件之后：SPA 的 index.html 与静态资源必须匿名可取，
 // 否则未登录时连登录页都打不开。/api/* 不受影响，仍会被 FallbackPolicy 拦截。
 app.UseAuthentication();
+
+// 首次登录必须改密：服务端强制（白名单见 MustChangePasswordMiddleware）
+app.UseMiddleware<MustChangePasswordMiddleware>();
+
 app.UseAuthorization();
 
 app.MapControllers();

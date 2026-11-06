@@ -33,6 +33,13 @@ public sealed record FileQuery
         PageSize = PageSize is < 1 or > 500 ? 50 : PageSize,
         SortBy = string.IsNullOrWhiteSpace(SortBy) ? "created" : SortBy.Trim().ToLowerInvariant(),
         SortDir = string.Equals(SortDir, "asc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc",
+
+        // 日期区间右端点：前端传的是"结束日期"，值形如 2026-11-06T00:00:00，
+        // 直接当上界会漏掉当天从 00:00:01 起的所有记录（用户会以为"今天没有文件"）。
+        // 没有具体时刻时补到当天最后一刻。
+        To = To is { } to && to.TimeOfDay == TimeSpan.Zero
+            ? to.Date.AddDays(1).AddTicks(-1)
+            : To,
     };
 }
 

@@ -51,80 +51,11 @@ public sealed class ContentCatalogService(
 
     public async Task<PagedResult<TemplateDto>> ListTemplatesAsync(FileQuery query, CancellationToken ct = default)
     {
-        var q = query.Normalized();
         var access = await CurrentAccessAsync(ct);
+        var page = await PageFilesAsync(TemplateRows(access), query, ct);
 
-        var filtered =
-            from t in _db.Templates.AsNoTracking()
-            join p in _db.Projects.AsNoTracking() on t.ProjectId equals p.Id
-            join c in _db.Checks.AsNoTracking() on t.CheckId equals c.Id
-            select new { t, Project = p.Name, Check = c.Name };
-
-        // 可见性过滤必须下推到 SQL：AllowedCheckIds 是预先展开好的 id 集合，
-        // 翻译成 IN 子句。若把它拉到内存里过滤，分页的 total 会算错。
-        // NeedsCheckFilter 为 false（超管 / 鉴权关闭）时完全不加条件，避免全表扫描被误过滤。
-        if (access.NeedsCheckFilter)
-        {
-            var allowed = access.AllowedCheckIds.ToList();
-            filtered = filtered.Where(x => allowed.Contains(x.t.CheckId));
-        }
-
-        if (!string.IsNullOrWhiteSpace(q.Project))
-        {
-            var project = q.Project.ToLower();
-            filtered = filtered.Where(x => x.Project.ToLower() == project);
-        }
-
-        if (!string.IsNullOrWhiteSpace(q.Check))
-        {
-            var check = q.Check.ToLower();
-            filtered = filtered.Where(x => x.Check.ToLower() == check);
-        }
-
-        if (!string.IsNullOrWhiteSpace(q.Extension))
-        {
-            var wanted = (q.Extension.StartsWith('.') ? q.Extension : "." + q.Extension).ToLower();
-            filtered = filtered.Where(x => x.t.Extension.ToLower() == wanted);
-        }
-
-        if (!string.IsNullOrWhiteSpace(q.Keyword))
-        {
-            var kw = q.Keyword.ToLower();
-            filtered = filtered.Where(x => x.t.FileName.ToLower().Contains(kw));
-        }
-
-        if (q.From is { } from)
-        {
-            filtered = filtered.Where(x => x.t.CreatedAt >= from);
-        }
-
-        if (q.To is { } to)
-        {
-            filtered = filtered.Where(x => x.t.CreatedAt <= to);
-        }
-
-        var total = await filtered.CountAsync(ct);
-
-        var ordered = q.SortBy switch
-        {
-            "name" when q.SortDir == "asc" => filtered.OrderBy(x => x.t.FileName),
-            "name" => filtered.OrderByDescending(x => x.t.FileName),
-            "size" when q.SortDir == "asc" => filtered.OrderBy(x => x.t.Size),
-            "size" => filtered.OrderByDescending(x => x.t.Size),
-            "created" when q.SortDir == "asc" => filtered.OrderBy(x => x.t.CreatedAt),
-            _ => filtered.OrderByDescending(x => x.t.CreatedAt),
-        };
-
-        var rows = await ordered
-            // tie-break：同名/同大小/同一毫秒写入的行在 SQLite 里顺序不保证，
-            // 不加第二排序键时分页会出现「第 1 页和第 2 页都出现同一条、另一条谁也看不到」。
-            .ThenBy(x => x.t.Id)
-            .Skip((q.Page - 1) * q.PageSize)
-            .Take(q.PageSize)
-            .ToListAsync(ct);
-
-        var items = rows.Select(x => ToTemplateDto(x.t, x.Project, x.Check)).ToList();
-        return new PagedResult<TemplateDto>(items, total, q.Page, q.PageSize);
+        return new PagedResult<TemplateDto>(
+            [.. page.Items.Select(r => ToTemplateDto(r))], page.Total, page.Page, page.PageSize);
     }
 
     public async Task<TemplateDto> UploadTemplateAsync(
@@ -140,7 +71,7 @@ public sealed class ContentCatalogService(
 
         if (declaredSize > _upload.MaxSizeBytes)
         {
-            throw new BadRequestException($"文件超过大小上限 {_upload.MaxSizeMB}MB。");
+            throw new PayloadTooLargeException($"文件超过大小上限 {_upload.MaxSizeMB}MB。");
         }
 
         var safeName = NameValidator.ValidateFileName(fileName);
@@ -188,7 +119,7 @@ public sealed class ContentCatalogService(
             await _logs.WriteAsync("上传模板", entity.RelativePath, success: true, ct: ct);
             return ToTemplateDto(entity, project.Name, check.Name);
         }
-        catch (Exception ex) when (ex is not ConflictException && ex is not BadRequestException)
+        catch (Exception ex) when (ex is not ConflictException && ex is not BadRequestException && ex is not PayloadTooLargeException)
         {
             await _logs.WriteFailureAsync("上传模板", $"{projectName}/{checkName}/{fileName}", ex, ct);
             throw;
@@ -259,8 +190,8 @@ public sealed class ContentCatalogService(
         if (string.IsNullOrWhiteSpace(request.NewFileName))
         {
             targetName = crossFolder
-                ? BuildCrossFolderName(sourceName, targetDirectory)
-                : BuildCopyName(sourceName, targetDirectory);
+                ? BuildCopyName(sourceName, targetDirectory, alwaysSuffix: false)
+                : BuildCopyName(sourceName, targetDirectory, alwaysSuffix: true);
         }
         else
         {
@@ -394,77 +325,176 @@ public sealed class ContentCatalogService(
 
     public async Task<PagedResult<DocumentDto>> ListDocumentsAsync(FileQuery query, CancellationToken ct = default)
     {
-        var q = query.Normalized();
         var access = await CurrentAccessAsync(ct);
+        var page = await PageFilesAsync(DocumentRows(access), query, ct);
 
-        var filtered =
-            from d in _db.Documents.AsNoTracking()
-            join p in _db.Projects.AsNoTracking() on d.ProjectId equals p.Id
-            join c in _db.Checks.AsNoTracking() on d.CheckId equals c.Id
-            select new { d, Project = p.Name, Check = c.Name };
+        return new PagedResult<DocumentDto>(
+            [.. page.Items.Select(r => ToDocumentDto(r))], page.Total, page.Page, page.PageSize);
+    }
 
-        // 同 ListTemplatesAsync：可见性过滤下推到 SQL，保证分页 total 正确。
+    // ── 列表查询（模板 / 文档共用一套） ─────────────────────────────────
+    //
+    // 这两个列表原先各写一遍：join、可见性过滤、五个筛选条件、排序、分页、tie-break，
+    // 合计 150 行几乎逐字相同。差异只有三处（来源表、展示时间、DTO 形状），
+    // 所以先投影成同一个行形状，剩下的逻辑只留一份 —— 下次改筛选语义时不会再"改了一个漏一个"。
+
+    /// <summary>
+    /// 两个列表共用的一行。ModifiedAt 是**界面上展示的那一列时间**：
+    /// 模板取真实修改时间，文档取创建时间（副本生成后一般不再变）。
+    /// 用 init 属性而不是位置构造：EF 只对成员初始化式的投影做稳定翻译，
+    /// 带构造参数的 join 投影会被判成"无法翻译到 SQL"。
+    /// </summary>
+    private sealed record FileRow
+    {
+        public int Id { get; init; }
+
+        public int CheckId { get; init; }
+
+        public string Project { get; init; } = string.Empty;
+
+        public string Check { get; init; } = string.Empty;
+
+        public string FileName { get; init; } = string.Empty;
+
+        public string Extension { get; init; } = string.Empty;
+
+        public long Size { get; init; }
+
+        public DateTime CreatedAt { get; init; }
+
+        public DateTime ModifiedAt { get; init; }
+
+        public string RelativePath { get; init; } = string.Empty;
+
+        public string SourceTemplatePath { get; init; } = string.Empty;
+    }
+
+    /// <summary>模板：展示与筛选都用修改时间（文件被替换过，创建时间已经不代表"什么时候变的"）。</summary>
+    private IQueryable<FileRow> TemplateRows(UserAccess access)
+    {
+        var rows =
+            from t in _db.Templates.AsNoTracking()
+            join p in _db.Projects.AsNoTracking() on t.ProjectId equals p.Id
+            join c in _db.Checks.AsNoTracking() on t.CheckId equals c.Id
+            select new FileRow
+            {
+                Id = t.Id,
+                CheckId = t.CheckId,
+                Project = p.Name,
+                Check = c.Name,
+                FileName = t.FileName,
+                Extension = t.Extension,
+                Size = t.Size,
+                CreatedAt = t.CreatedAt,
+                ModifiedAt = t.ModifiedAt,
+                RelativePath = t.RelativePath,
+            };
+
+        // 可见性过滤必须下推到 SQL：AllowedCheckIds 是预先展开好的 id 集合，
+        // 翻译成 IN 子句。若拉到内存里过滤，分页的 total 会算错。
+        // NeedsCheckFilter 为 false（超管 / 鉴权关闭）时完全不加条件。
         if (access.NeedsCheckFilter)
         {
             var allowed = access.AllowedCheckIds.ToList();
-            filtered = filtered.Where(x => allowed.Contains(x.d.CheckId));
+            rows = rows.Where(r => allowed.Contains(r.CheckId));
         }
+
+        return rows;
+    }
+
+    /// <summary>文档：展示与筛选都用创建时间（副本生成后一般不再改名/替换）。</summary>
+    private IQueryable<FileRow> DocumentRows(UserAccess access)
+    {
+        var rows =
+            from d in _db.Documents.AsNoTracking()
+            join p in _db.Projects.AsNoTracking() on d.ProjectId equals p.Id
+            join c in _db.Checks.AsNoTracking() on d.CheckId equals c.Id
+            select new FileRow
+            {
+                Id = d.Id,
+                CheckId = d.CheckId,
+                Project = p.Name,
+                Check = c.Name,
+                FileName = d.FileName,
+                Extension = d.Extension,
+                Size = d.Size,
+                CreatedAt = d.CreatedAt,
+                ModifiedAt = d.CreatedAt,
+                RelativePath = d.RelativePath,
+                SourceTemplatePath = d.SourceTemplatePath,
+            };
+
+        if (access.NeedsCheckFilter)
+        {
+            var allowed = access.AllowedCheckIds.ToList();
+            rows = rows.Where(r => allowed.Contains(r.CheckId));
+        }
+
+        return rows;
+    }
+
+    private static async Task<PagedResult<FileRow>> PageFilesAsync(
+        IQueryable<FileRow> rows, FileQuery query, CancellationToken ct)
+    {
+        var q = query.Normalized();
 
         if (!string.IsNullOrWhiteSpace(q.Project))
         {
             var project = q.Project.ToLower();
-            filtered = filtered.Where(x => x.Project.ToLower() == project);
+            rows = rows.Where(r => r.Project.ToLower() == project);
         }
 
         if (!string.IsNullOrWhiteSpace(q.Check))
         {
             var check = q.Check.ToLower();
-            filtered = filtered.Where(x => x.Check.ToLower() == check);
+            rows = rows.Where(r => r.Check.ToLower() == check);
         }
 
         if (!string.IsNullOrWhiteSpace(q.Extension))
         {
             var wanted = (q.Extension.StartsWith('.') ? q.Extension : "." + q.Extension).ToLower();
-            filtered = filtered.Where(x => x.d.Extension.ToLower() == wanted);
+            rows = rows.Where(r => r.Extension.ToLower() == wanted);
         }
 
         if (!string.IsNullOrWhiteSpace(q.Keyword))
         {
             var kw = q.Keyword.ToLower();
-            filtered = filtered.Where(x => x.d.FileName.ToLower().Contains(kw));
+            rows = rows.Where(r => r.FileName.ToLower().Contains(kw));
         }
 
         if (q.From is { } from)
         {
-            filtered = filtered.Where(x => x.d.CreatedAt >= from);
+            rows = rows.Where(r => r.ModifiedAt >= from);
         }
 
         if (q.To is { } to)
         {
-            filtered = filtered.Where(x => x.d.CreatedAt <= to);
+            rows = rows.Where(r => r.ModifiedAt <= to);
         }
 
-        var total = await filtered.CountAsync(ct);
+        var total = await rows.CountAsync(ct);
 
         var ordered = q.SortBy switch
         {
-            "name" when q.SortDir == "asc" => filtered.OrderBy(x => x.d.FileName),
-            "name" => filtered.OrderByDescending(x => x.d.FileName),
-            "size" when q.SortDir == "asc" => filtered.OrderBy(x => x.d.Size),
-            "size" => filtered.OrderByDescending(x => x.d.Size),
-            "created" when q.SortDir == "asc" => filtered.OrderBy(x => x.d.CreatedAt),
-            _ => filtered.OrderByDescending(x => x.d.CreatedAt),
+            "name" when q.SortDir == "asc" => rows.OrderBy(r => r.FileName),
+            "name" => rows.OrderByDescending(r => r.FileName),
+            "size" when q.SortDir == "asc" => rows.OrderBy(r => r.Size),
+            "size" => rows.OrderByDescending(r => r.Size),
+            "created" when q.SortDir == "asc" => rows.OrderBy(r => r.CreatedAt),
+            "created" => rows.OrderByDescending(r => r.CreatedAt),
+            "modified" when q.SortDir == "asc" => rows.OrderBy(r => r.ModifiedAt),
+            _ => rows.OrderByDescending(r => r.ModifiedAt),
         };
 
-        var rows = await ordered
-            // 同模板列表：加第二排序键，避免分页抖动导致重复行与漏行
-            .ThenBy(x => x.d.Id)
+        var items = await ordered
+            // tie-break：同大小 / 同一毫秒写入的行在 SQLite 里顺序不保证，
+            // 不加第二排序键时分页会出现「两页都出现同一条、另一条谁也看不到」。
+            .ThenBy(r => r.Id)
             .Skip((q.Page - 1) * q.PageSize)
             .Take(q.PageSize)
             .ToListAsync(ct);
 
-        var items = rows.Select(x => ToDocumentDto(x.d, x.Project, x.Check)).ToList();
-        return new PagedResult<DocumentDto>(items, total, q.Page, q.PageSize);
+        return new PagedResult<FileRow>(items, total, q.Page, q.PageSize);
     }
 
     public async Task<DocumentDto> CreateDocumentAsync(CreateDocumentRequest request, CancellationToken ct = default)
@@ -667,7 +697,7 @@ public sealed class ContentCatalogService(
         string targetName;
         if (string.IsNullOrWhiteSpace(request.NewFileName))
         {
-            targetName = BuildCrossFolderName(sourceName, targetDirectory);
+            targetName = BuildCopyName(sourceName, targetDirectory, alwaysSuffix: false);
         }
         else
         {
@@ -719,40 +749,12 @@ public sealed class ContentCatalogService(
 
             return new CopyResultDto([targetName], [], targetProject.Name, targetCheck.Name);
         }
-        catch (Exception ex) when (ex is not ConflictException && ex is not BadRequestException)
+        catch (Exception ex) when (ex is not ConflictException && ex is not BadRequestException && ex is not PayloadTooLargeException)
         {
             await _logs.WriteFailureAsync(
                 "复制文档", $"{project.Name}/{check.Name}/{sourceName} → {targetProject.Name}/{targetCheck.Name}", ex, ct);
             throw;
         }
-    }
-
-    /// <summary>跨文件夹复制的目标名：优先沿用原名，重名才加「_副本」序号。</summary>
-    private string BuildCrossFolderName(string sourceName, string targetDirectory)
-    {
-        if (!_store.FileExists(Path.Combine(targetDirectory, sourceName)))
-        {
-            return sourceName;
-        }
-
-        var baseName = Path.GetFileNameWithoutExtension(sourceName);
-        var extension = Path.GetExtension(sourceName);
-
-        var candidate = $"{baseName}_副本{extension}";
-        var index = 2;
-
-        while (_store.FileExists(Path.Combine(targetDirectory, candidate)))
-        {
-            candidate = $"{baseName}_副本{index}{extension}";
-            index++;
-
-            if (index > 999)
-            {
-                throw new ConflictException($"无法为 {sourceName} 生成副本名，候选名已耗尽。");
-            }
-        }
-
-        return candidate;
     }
 
     // ── 元数据同步（§6.2 文件系统为准） ─────────────────────────────────
@@ -975,10 +977,20 @@ public sealed class ContentCatalogService(
         t.RelativePath,
         ClientPathBuilder.Build(_storage.ClientTemplatesRoot, _storage.TemplatesRoot, t.RelativePath));
 
+    private TemplateDto ToTemplateDto(FileRow r) => new(
+        r.Id, r.FileName, r.Extension, r.Size, r.ModifiedAt, r.CreatedAt, r.Project, r.Check,
+        r.RelativePath,
+        ClientPathBuilder.Build(_storage.ClientTemplatesRoot, _storage.TemplatesRoot, r.RelativePath));
+
     private DocumentDto ToDocumentDto(Document d, string project, string check) => new(
         d.Id, d.FileName, d.Extension, d.Size, d.CreatedAt, project, check,
         d.SourceTemplatePath, d.RelativePath,
         ClientPathBuilder.Build(_storage.ClientDataRoot, _storage.DataRoot, d.RelativePath));
+
+    private DocumentDto ToDocumentDto(FileRow r) => new(
+        r.Id, r.FileName, r.Extension, r.Size, r.CreatedAt, r.Project, r.Check,
+        r.SourceTemplatePath, r.RelativePath,
+        ClientPathBuilder.Build(_storage.ClientDataRoot, _storage.DataRoot, r.RelativePath));
 
     /// <summary>
     /// 删除刚写出去、但库没提交成功的文件（写库失败时的回滚）。
@@ -1022,15 +1034,31 @@ public sealed class ContentCatalogService(
         }
     }
 
-    private string BuildCopyName(string sourceName, string directory)
+    /// <summary>
+    /// 生成副本名。两种调用语义刻意不同：
+    /// <list type="bullet">
+    ///   <item><paramref name="alwaysSuffix"/> = true（同目录复制）：必然重名，
+    ///         所以**总是**追加「_副本」</item>
+    ///   <item><paramref name="alwaysSuffix"/> = false（跨目录复制）：「把这份放到另一个文件夹」
+    ///         保留原名更符合直觉，只有目标已有同名才追加</item>
+    /// </list>
+    /// 判重统一走忽略大小写（见 <see cref="FileNames"/>）：NAS 是 ext4，`A.docx` 与 `a.docx`
+    /// 能并存，但 Windows 经 SMB 看到的是同一个文件。
+    /// </summary>
+    private string BuildCopyName(string sourceName, string directory, bool alwaysSuffix)
     {
+        if (!alwaysSuffix && !FileNames.ExistsIgnoringCase(_store, directory, sourceName))
+        {
+            return sourceName;
+        }
+
         var baseName = Path.GetFileNameWithoutExtension(sourceName);
         var extension = Path.GetExtension(sourceName);
 
         var candidate = $"{baseName}_副本{extension}";
         var index = 2;
 
-        while (_store.FileExists(Path.Combine(directory, candidate)))
+        while (FileNames.ExistsIgnoringCase(_store, directory, candidate))
         {
             candidate = $"{baseName}_副本{index}{extension}";
             index++;

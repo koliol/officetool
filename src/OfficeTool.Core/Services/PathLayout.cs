@@ -79,9 +79,6 @@ public sealed class PathLayout(StorageOptions storageOptions)
         return PathGuard.CombineUnderRoot(TrashRoot, kind, day);
     }
 
-    public string TrashRelativePath(string kind, DateTime deletedAt, string fileName) =>
-        PathGuard.ToRelative(TrashRoot, Path.Combine(TrashKindDirectory(kind, deletedAt), fileName));
-
     /// <summary>
     /// 把业务相对路径转成回收站里的唯一文件名，避免跨项目/检项同名冲突。
     ///

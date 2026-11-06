@@ -285,9 +285,6 @@ public sealed class AuthOptions
     /// <summary>ACL 解析结果缓存分钟数。</summary>
     public int AclCacheMinutes { get; set; } = 5;
 
-    /// <summary>组列表缓存分钟数。AD 短暂不可达时降级用缓存，避免全员被锁在外面。</summary>
-    public int GroupCacheMinutes { get; set; } = 10;
-
     /// <summary>Users 表为空时自动创建本地管理员（首次部署引导）。</summary>
     public bool BootstrapLocalAdmin { get; set; } = true;
 
@@ -295,21 +292,15 @@ public sealed class AuthOptions
     public string BootstrapAdminName { get; set; } = "admin";
 }
 
-/// <summary>
-/// 提取规则**不再来自配置**。
-///
-/// 早期版本把规则做成 <c>Extraction:Rules</c> 配置数组，但实际需求是：
-/// 规则要能上传、能有备注、能在网页上按文件夹管理并复制到别的文件夹 ——
-/// 这些都是「文件 + 目录」的形态，配置数组无法承载。
-///
-/// 现在规则是存放在 <c>ExtractionRules\{项目}\{检项}\</c> 下的**文件**
-/// （见 <c>StorageOptions.RulesRoot</c> 与 <c>PathLayout.RuleDirectory</c>），
-/// 由 <c>RuleCatalogService</c> 负责，备注存在数据库的 <c>RuleNotes</c> 表。
-///
-/// ⚠️ 规则文件**只存储、不执行**。真正的执行要等提取脚本实现，
-/// 接入点是 <c>AttachmentService.ExtractAsync</c>。
-/// </summary>
-internal static class ExtractionFeatureNotes
-{
-    // 仅作为设计说明的载体，无成员。
-}
+// ── 关于「提取规则为什么不在配置里」────────────────────────────────
+//
+// 早期版本把规则做成 Extension:Rules 之类的配置数组，但实际需求是：
+// 规则要能上传、能有备注、能在网页上按文件夹管理并复制到别的文件夹 ——
+// 这些都是「文件 + 目录」的形态，配置数组承载不了。
+//
+// 现在规则是存放在 ExtractionRules\{项目}\{检项}\ 下的文件
+//（见 StorageOptions.RulesRoot 与 PathLayout.RuleDirectory），
+// 由 RuleCatalogService 负责，备注存在数据库的 RuleNotes 表。
+//
+// ⚠️ 规则文件只存储、不执行。真正的执行要等提取脚本实现，
+// 接入点是 AttachmentService.ExtractAsync。

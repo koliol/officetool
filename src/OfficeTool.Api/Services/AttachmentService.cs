@@ -78,7 +78,7 @@ public sealed class AttachmentService(
 
         if (declaredSize > _upload.MaxSizeBytes)
         {
-            throw new BadRequestException($"附件超过大小上限 {_upload.MaxSizeMB}MB。");
+            throw new PayloadTooLargeException($"附件超过大小上限 {_upload.MaxSizeMB}MB。");
         }
 
         var safeName = NameValidator.ValidateFileName(fileName);
@@ -112,7 +112,7 @@ public sealed class AttachmentService(
 
             return ToDto(meta, project.Name, check.Name);
         }
-        catch (Exception ex) when (ex is not ConflictException && ex is not BadRequestException)
+        catch (Exception ex) when (ex is not ConflictException && ex is not BadRequestException && ex is not PayloadTooLargeException)
         {
             await _logs.WriteFailureAsync("上传附件", $"{projectName}/{checkName}/{fileName}", ex, ct);
             throw;
@@ -212,11 +212,7 @@ public sealed class AttachmentService(
     }
 
     private bool IsAllowedExtension(string extension) =>
-        _upload.AttachmentExtensions.Any(
-            e => string.Equals(NormalizeExtension(e), NormalizeExtension(extension), StringComparison.OrdinalIgnoreCase));
-
-    private static string NormalizeExtension(string extension) =>
-        extension.StartsWith('.') ? extension : "." + extension;
+        FileExtensions.IsAllowed(extension, _upload.AttachmentExtensions);
 
     private AttachmentDto ToDto(FileMeta meta, string project, string check) => new(
         meta.FileName,

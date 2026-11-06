@@ -34,9 +34,6 @@ public sealed class AdminController(AdminService admin) : ControllerBase
         CancellationToken ct = default) =>
         _admin.ListUsersAsync(keyword, source, enabled, page, pageSize, ct);
 
-    [HttpGet("users/{id:int}")]
-    public Task<UserDto> GetUser(int id, CancellationToken ct) => _admin.GetUserAsync(id, ct);
-
     /// <summary>新建本地账户。响应里的明文密码<strong>只出现这一次</strong>。</summary>
     [HttpPost("users")]
     public Task<CreateUserResponse> CreateUser([FromBody] CreateUserRequest request, CancellationToken ct) =>

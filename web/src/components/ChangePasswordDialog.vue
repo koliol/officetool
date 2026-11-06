@@ -63,17 +63,24 @@ async function submit() {
     return
   }
 
-  busy.value = true
-  try {
-    await auth.changePassword(form.oldPassword, form.newPassword)
-    ElMessage.success('密码已修改')
-    emit('update:visible', false)
-  } catch (error) {
-    ElMessage.error(error.friendlyMessage || '修改失败')
-  } finally {
-    busy.value = false
+    busy.value = true
+    try {
+      await auth.changePassword(form.oldPassword, form.newPassword)
+      ElMessage.success('密码已修改')
+      emit('update:visible', false)
+
+      // 强制改密期间服务端拦掉了除 /api/auth/* 以外的所有请求，
+      // 工作区数据一条都没加载。改完必须重新走一遍启动流程，
+      // 否则会停在一张空的项目树上，看起来像"改完密码系统就坏了"。
+      if (props.forced) {
+        window.location.reload()
+      }
+    } catch (error) {
+      ElMessage.error(error.friendlyMessage || '修改失败')
+    } finally {
+      busy.value = false
+    }
   }
-}
 </script>
 
 <template>

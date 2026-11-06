@@ -4,6 +4,7 @@ import { ElMessageBox } from 'element-plus'
 import { ElMessage } from '../../ui/message'
 import { adminApi } from '../../api'
 import { useAuthStore, levelName, levelTagType } from '../../auth'
+import { formatTime } from '../../ui/format'
 
 /**
  * 用户管理。
@@ -31,14 +32,6 @@ const editDialog = reactive({ visible: false, busy: false, row: null, displayNam
 const secretDialog = reactive({ visible: false, title: '', userName: '', password: '' })
 const effectiveDrawer = reactive({ visible: false, loading: false, data: null })
 
-function formatTime(value) {
-  if (!value) return '从未登录'
-  const d = new Date(value)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
-    d.getMinutes(),
-  )}`
-}
 
 function sourceLabel(source) {
   return source === 'Ad' ? '域账户' : '本地账户'
@@ -312,7 +305,7 @@ onMounted(load)
       </el-table-column>
 
       <el-table-column label="最近登录" width="140">
-        <template #default="{ row }">{{ formatTime(row.lastLoginAt) }}</template>
+        <template #default="{ row }">{{ formatTime(row.lastLoginAt, '从未登录') }}</template>
       </el-table-column>
 
       <el-table-column label="操作" width="238" fixed="right">

@@ -142,9 +142,6 @@ public sealed class DocumentNamingService : IDisposable
         }
     }
 
-    /// <summary>当前被跟踪的目录锁数量，便于诊断。</summary>
-    public int TrackedDirectoryCount => _directoryLocks.Count;
-
     public void Dispose()
     {
         if (_disposed)
