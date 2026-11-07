@@ -64,6 +64,15 @@ function dateValue(key, withTime) {
   return raw ? String(raw) : ''
 }
 
+/** 多选下拉的取值统一成数组（历史数据可能是单个字符串，包一层） */
+function toList(value) {
+  if (Array.isArray(value)) {
+    return value
+  }
+
+  return value === '' || value === undefined || value === null ? [] : [value]
+}
+
 function onDateChange(key, withTime) {
   return (value) => {
     if (!value) {
@@ -152,12 +161,15 @@ const DATETIME_FORMAT = 'YYYY-MM-DDTHH:mm:ss'
 
             <el-select
               v-else-if="field.type === 'select'"
-              :model-value="String(valueOf(field.key))"
+              :model-value="field.multiple ? toList(valueOf(field.key, [])) : String(valueOf(field.key))"
               :placeholder="'请选择'"
+              :multiple="Boolean(field.multiple)"
+              :collapse-tags="Boolean(field.multiple)"
+              :collapse-tags-tooltip="Boolean(field.multiple)"
               :disabled="disabled"
               clearable
               class="w-select"
-              @update:model-value="(v) => setField(field.key, v ?? '')"
+              @update:model-value="(v) => setField(field.key, field.multiple ? (v ?? []) : (v ?? ''))"
             >
               <el-option v-for="option in field.options" :key="option" :label="option" :value="option" />
             </el-select>

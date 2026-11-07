@@ -299,7 +299,8 @@ public static partial class FormSchema
             options,
             columns,
             ReadInt(element, "minRows"),
-            ReadInt(element, "maxLength"));
+            ReadInt(element, "maxLength"),
+            type == "select" && ReadBool(element, "multiple"));
     }
 
     private static FormColumn? ReadColumn(JsonElement element, string path, List<string> errors)
@@ -417,7 +418,8 @@ public sealed record FormField(
     IReadOnlyList<string> Options,
     IReadOnlyList<FormColumn> Columns,
     int MinRows,
-    int MaxLength)
+    int MaxLength,
+    bool Multiple = false)
 {
     public bool IsTable => Type == "table";
 }

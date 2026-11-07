@@ -104,10 +104,16 @@ function apply() {
   document.title = match ? `${target.title} · Office 检验记录` : 'Office 文档管理工具'
 }
 
-/** 跳转。重复点击同一路径也会重新触发一次（version 自增）。 */
-export function navigate(path, { replace = false } = {}) {
+/**
+ * 跳转。重复点击同一路径也会重新触发一次（version 自增）。
+ * 支持 { query: { id: 1 } } 形式的查询参数 —— 记录页 / 设计器靠 ?id= 传参。
+ * 之前这里把 query 整个丢弃，导致"编辑模板""打开记录"永远打开一个空白页，
+ * 是"建完模板无法再次进入编辑"的直接根因。
+ */
+export function navigate(path, { query, replace = false } = {}) {
   const normalized = path.startsWith('/') ? path : `/${path}`
-  const target = `#${normalized}`
+  const search = query && Object.keys(query).length ? `?${new URLSearchParams(query).toString()}` : ''
+  const target = `#${normalized}${search}`
 
   if (window.location.hash === target) {
     apply()

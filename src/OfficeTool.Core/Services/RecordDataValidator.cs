@@ -56,6 +56,12 @@ public static class RecordDataValidator
                 continue;
             }
 
+            if (field.Type == "select" && field.Multiple)
+            {
+                ValidateMultiSelect(field, value, errors);
+                continue;
+            }
+
             ValidateScalar(field.Label, field.Type, field.Options, value, errors);
         }
 
@@ -156,6 +162,30 @@ public static class RecordDataValidator
                 }
 
                 break;
+        }
+    }
+
+    /// <summary>多选下拉：取值是数组，每一项都必须在可选项内。</summary>
+    private static void ValidateMultiSelect(FormField field, JsonElement value, List<string> errors)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            errors.Add($"「{field.Label}」是多选字段，取值必须是选项数组。");
+            return;
+        }
+
+        if (field.Options.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var item in value.EnumerateArray())
+        {
+            var text = AsText(item);
+            if (!field.Options.Contains(text, StringComparer.Ordinal))
+            {
+                errors.Add($"「{field.Label}」的取值「{text}」不在可选项内。");
+            }
         }
     }
 

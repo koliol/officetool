@@ -173,8 +173,16 @@ function moveField(section, index, delta) {
 function onTypeChange(field, type) {
   field.type = type
 
-  if (type === 'select' && (!Array.isArray(field.options) || field.options.length === 0)) {
-    field.options = ['选项一', '选项二']
+  if (type === 'select') {
+    field.multiple = Boolean(field.multiple)
+
+    if (!Array.isArray(field.options) || field.options.length === 0) {
+      field.options = ['选项一', '选项二']
+    }
+
+    // 选项编辑框是草稿模式（见下），切换类型后把草稿同步成当前值，
+    // 否则旧草稿会在失焦时把刚生成的默认选项清掉
+    syncOptionsDraft()
   }
 
   if (type === 'table' && (!Array.isArray(field.columns) || field.columns.length === 0)) {
@@ -185,6 +193,33 @@ function onTypeChange(field, type) {
     field.minRows = 1
   }
 }
+
+// ── 选项编辑（草稿模式）────────────────────────────────────────────
+// 不能用"受控 + 实时 split/trim/filter"的写法：回车产生的空行会被立刻过滤掉，
+// 行尾空格也会被 trim 吞掉 —— 表现为"回车打不出第二个选项、结尾没法敲空格"。
+// 改成草稿字符串随意编辑，失焦（或保存）时才解析成选项数组。
+const optionsDraft = ref('')
+
+function syncOptionsDraft() {
+  optionsDraft.value = (currentField.value?.options ?? []).join('\n')
+}
+
+function commitOptions() {
+  const field = currentField.value
+  if (!field || field.type !== 'select') {
+    return
+  }
+
+  field.options = optionsDraft.value
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+// 选中字段变化（含保存后重新加载）时同步草稿
+watch(currentField, (field) => {
+  optionsDraft.value = (field?.options ?? []).join('\n')
+})
 
 function addColumn(field) {
   field.columns.push({ key: uniqueKey('col', 'fields'), label: '新列', type: 'text' })
@@ -253,6 +288,9 @@ function clientValidate() {
 }
 
 async function save() {
+  // 选项草稿框可能还停着未失焦的输入，先落账再校验
+  commitOptions()
+
   const errors = clientValidate()
 
   if (errors.length) {
@@ -439,13 +477,19 @@ watch(templateId, load)
               </template>
 
               <template v-if="currentField.type === 'select'">
+                <el-form-item label="多选">
+                  <el-switch
+                    :model-value="Boolean(currentField.multiple)"
+                    @update:model-value="(v) => (currentField.multiple = v)"
+                  />
+                  <span class="field-hint">开启后填写时可选中多个选项</span>
+                </el-form-item>
                 <el-form-item label="选项">
                   <el-input
-                    :model-value="(currentField.options || []).join('\n')"
+                    v-model="optionsDraft"
                     type="textarea"
                     :rows="4"
-                    placeholder="每行一个选项"
-                    @update:model-value="(v) => (currentField.options = v.split('\n').map((s) => s.trim()).filter(Boolean))"
+                    placeholder="每行一个选项；回车换行写下一项，允许空格"
                   />
                 </el-form-item>
               </template>
@@ -668,5 +712,11 @@ watch(templateId, load)
 
 .w-full {
   width: 100%;
+}
+
+.field-hint {
+  margin-left: 10px;
+  font-size: 11.5px;
+  color: var(--ot-text-faint);
 }
 </style>

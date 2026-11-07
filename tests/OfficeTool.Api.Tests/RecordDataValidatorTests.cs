@@ -111,3 +111,84 @@ public class RecordDataValidatorTests
         Assert.Empty(RecordDataValidator.Validate(Schema, Json(data), requireComplete: true));
     }
 }
+
+/// <summary>
+/// 多选下拉（select + multiple）。
+/// 值是数组，每一项都必须在 options 内；空数组视为"没填"，
+/// 提交时若必填则报缺项 —— 与单选的空串语义一致。
+/// </summary>
+public class MultiSelectValidatorTests
+{
+    private const string SchemaJson = """
+    {
+      "sections": [
+        {
+          "key": "basic",
+          "title": "基本信息",
+          "fields": [
+            {
+              "key": "tags",
+              "label": "检测类别",
+              "type": "select",
+              "multiple": true,
+              "required": true,
+              "options": ["出厂检验", "型式检验", "委托检验"]
+            },
+            { "key": "name", "label": "样品名称", "type": "text", "required": true }
+          ]
+        }
+      ]
+    }
+    """;
+
+    private static FormDefinition Schema => FormSchema.Validate(SchemaJson).Schema!;
+
+    private static JsonElement Json(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
+    }
+
+    [Fact]
+    public void 多选合法取值应通过()
+    {
+        const string data = """
+        { "tags": ["出厂检验", "型式检验"], "name": "样品" }
+        """;
+
+        Assert.Empty(RecordDataValidator.Validate(Schema, Json(data), requireComplete: true));
+    }
+
+    [Fact]
+    public void 多选里混入非法项应报错()
+    {
+        const string data = """
+        { "tags": ["出厂检验", "不存在的选项"], "name": "样品" }
+        """;
+
+        var errors = RecordDataValidator.Validate(Schema, Json(data), requireComplete: true);
+        Assert.Contains(errors, e => e.Contains("不存在的选项"));
+    }
+
+    [Fact]
+    public void 多选必填但为空数组提交应报缺项()
+    {
+        const string data = """
+        { "tags": [], "name": "样品" }
+        """;
+
+        var errors = RecordDataValidator.Validate(Schema, Json(data), requireComplete: true);
+        Assert.Contains(errors, e => e.Contains("检测类别"));
+    }
+
+    [Fact]
+    public void multiple标志应从原始schema解析出来()
+    {
+        var field = Schema.FieldIndex()["tags"];
+        Assert.True(field.Multiple);
+
+        var single = FormSchema.Validate(BuiltInContent.InsolubleParticlesTemplateSchema).Schema!
+            .FieldIndex()["method"];
+        Assert.False(single.Multiple);
+    }
+}
