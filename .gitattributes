@@ -1,0 +1,17 @@
+# 行尾规范（实机教训：Windows 上 core.autocrlf=true 时 git archive 也会转换，
+# 镜像里的 shell 脚本带上  直接导致容器起不来）
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.db binary
+*.woff binary
+*.woff2 binary
