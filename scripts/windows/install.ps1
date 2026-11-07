@@ -1,4 +1,4 @@
-# =====================================================================
+﻿# =====================================================================
 # OfficeTool Windows 原生部署 —— 一键安装
 #
 # 用法（管理员 PowerShell）：
@@ -37,7 +37,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repo = Split-Path -Parent $PSScriptRoot   # scripts/windows -> repo 根
+# $PSScriptRoot 是脚本所在**目录**（…\scripts\windows），不是文件路径；
+# 仓库根 = 它的上两级。
+$repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 Write-Host "== OfficeTool Windows 安装 ==" -ForegroundColor Cyan
 Write-Host "程序目录：$InstallDir"
@@ -45,6 +47,15 @@ Write-Host "数据目录：$DataDir"
 Write-Host "服务端口：$Port"
 
 # ── 0. 前置检查 ──────────────────────────────────────────────────────
+# 管理员自检放在最前面：注册服务、开防火墙都需要提权，
+# 等发布跑完两分钟才在步骤 4 报错，体验极差。
+if (-not $WhatIf) {
+    $principal = New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "当前 PowerShell 不是管理员身份。请以管理员运行（或改用 -WhatIf 只生成布局）。"
+    }
+}
+
 if (-not $SelfContained) {
     $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
     if (-not $dotnet) {
@@ -173,15 +184,38 @@ if (-not $WhatIf) {
         Start-Sleep -Seconds 2
     }
 
-    # ASPNETCORE_ENVIRONMENT=Production 使其加载上面生成的配置文件
-    & sc.exe create $ServiceName `
-        "binPath= ""$exe"" --urls http://0.0.0.0:$Port" `
-        "start= auto" `
-        "DisplayName= OfficeTool 检验记录（ELN）" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "注册服务失败（需要管理员权限运行本脚本）" }
+    # 用 New-Service 而不是 sc.exe create：sc 用自研的原始命令行解析，
+    # PowerShell 传过去的带引号参数（如 "start= auto"）会连引号一起进值，
+    # 直接 1639 invalid start。New-Service 没有这层问题。
+    New-Service -Name $ServiceName `
+        -BinaryPathName "`"$exe`" --urls http://0.0.0.0:$Port" `
+        -DisplayName "OfficeTool 检验记录（ELN）" `
+        -StartupType Automatic -ErrorAction Stop | Out-Null
 
-    & sc.exe description $ServiceName "Office 检验记录与文档管理（ELN）。数据目录：$DataDir" | Out-Null
-    & sc.exe failure $ServiceName reset= 86400 actions= restart/10000/restart/30000/restart/60000 | Out-Null
+    Set-Service -Name $ServiceName -Description "Office 检验记录与文档管理（ELN）。数据目录：$DataDir"
+
+    # 框架依赖发布要求服务进程自己能解析 .NET 运行时。dotnet 装在用户目录时
+    # （如 C:\Users\<u>\.dotnet），LocalSystem 服务的 PATH / DOTNET_ROOT 都没有它，
+    # 表现为 7009 超时 + apphost 0x80008083。把 DOTNET_ROOT 写进服务级
+    # Environment 注册表值（HKLM\...\Services\<名>\Environment），服务启动时生效。
+    if (-not $SelfContained) {
+        $dotnetExe = (Get-Command dotnet -ErrorAction SilentlyContinue).Source
+        if ($dotnetExe) {
+            $dotnetRoot = Split-Path -Parent $dotnetExe
+            New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" `
+                -Name Environment -PropertyType MultiString `
+                -Value @("DOTNET_ROOT=$dotnetRoot") -Force | Out-Null
+            Write-Host "已注入服务环境变量 DOTNET_ROOT=$dotnetRoot"
+        }
+    }
+
+    # 崩溃自动重启：10s/30s/60s 三次，24h 后失败计数复位。
+    # 注意 sc.exe 的 name= 和值必须是命令行上**不带引号**的两个相邻 token，
+    # 所以这里逐个传参而不是拼成一个字符串。
+    $scOutput = & sc.exe failure $ServiceName reset= 86400 actions= restart/10000/restart/30000/restart/60000 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "设置崩溃自动重启失败（不影响运行）：$scOutput"
+    }
 
     # ── 5. 防火墙 ────────────────────────────────────────────────────
     Write-Host "`n== 5. 防火墙 ==" -ForegroundColor Cyan
@@ -191,7 +225,21 @@ if (-not $WhatIf) {
 
     # ── 6. 启动 ──────────────────────────────────────────────────────
     Write-Host "`n== 6. 启动服务 ==" -ForegroundColor Cyan
-    Start-Service -Name $ServiceName
+    try {
+        Start-Service -Name $ServiceName -ErrorAction Stop
+    } catch {
+        # 把 SCM 的事件日志要点带出来 —— 启动失败的根因都在 System/Application 日志里，
+        # 只抛 "无法启动服务" 等于让人盲猜。
+        Write-Warning "服务启动失败，事件日志线索："
+        Get-WinEvent -FilterHashtable @{ LogName = 'System'; StartTime = (Get-Date).AddMinutes(-2) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Id -in 7000, 7009, 7034 -and $_.Message -match $ServiceName } |
+            ForEach-Object { Write-Warning "  [SCM $($_.Id)] $(($_.Message -split "`n")[0])" }
+        Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-2) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'OfficeTool|\.NET application|hostfxr' } |
+            Select-Object -First 3 |
+            ForEach-Object { Write-Warning "  [App] $(($_.Message -split "`n")[0..2] -join ' ')" }
+        throw
+    }
     Start-Sleep -Seconds 5
 
     $svc = Get-Service -Name $ServiceName

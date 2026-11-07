@@ -1,4 +1,4 @@
-# =====================================================================
+﻿# =====================================================================
 # OfficeTool Windows 升级 —— 停服务 → 备份数据库 → 重新发布 → 沿用安装参数重启
 #
 # 用法（管理员 PowerShell）：
@@ -17,12 +17,20 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repo = Split-Path -Parent $PSScriptRoot
+# $PSScriptRoot 是脚本所在**目录**（…\scripts\windows），不是文件路径；
+# 仓库根 = 它的上两级。
+$repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 # ── 0. 恢复安装参数 ──────────────────────────────────────────────────
-# 安装时 install.ps1 把参数存到了数据目录；没有就用默认值（并提示）
+# 安装时 install.ps1 把参数存到了 <数据目录>\install-settings.json。
+# 查找顺序：命令行指定的 DataDir → 默认数据目录。只查默认目录是错的 ——
+# 装在自定义目录时这里读不到参数，会静默退回默认值，把新版本装到 C:\OfficeTool。
 $defaultDataDir = "C:\OfficeToolData"
-$settingsPath = Join-Path $defaultDataDir "install-settings.json"
+$settingsPath = if ($DataDir) {
+    Join-Path $DataDir "install-settings.json"
+} else {
+    Join-Path $defaultDataDir "install-settings.json"
+}
 
 if (Test-Path $settingsPath) {
     $saved = Get-Content $settingsPath -Raw | ConvertFrom-Json
@@ -40,7 +48,7 @@ if (Test-Path $settingsPath) {
 }
 
 Write-Host "== OfficeTool 升级 ==" -ForegroundColor Cyan
-Write-Host "程序：$InstallDir    数据：$DataDir    服务：$ServiceName:$Port"
+Write-Host "程序：$InstallDir    数据：$DataDir    服务：${ServiceName}:$Port"
 
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if (-not $svc) {

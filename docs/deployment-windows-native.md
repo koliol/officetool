@@ -77,6 +77,9 @@ Select-String -Path "C:\OfficeToolData\logs\officetool-*.log" -Pattern "初始�
 .\upgrade.ps1        # 自动读取安装参数：停服务 → 备份数据库 → 重新发布 → 启动
 ```
 
+> 若安装时用了非默认数据目录，升级时请显式传 `-DataDir`：
+> 脚本按它定位 `install-settings.json`（安装参数），找不到会退回默认目录/端口/服务名。
+
 数据库每次升级前自动备份到 `state\officetool.<时间戳>.bak`（保留最近 5 份）。
 
 ## 卸载
